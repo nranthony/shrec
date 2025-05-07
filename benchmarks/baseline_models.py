@@ -2,7 +2,7 @@ import numpy as np
 # import scipy
 import warnings
 
-from shrec.utils import *
+from shrec.utils.utils import *
 
 
 RANDOM_SEED = 0

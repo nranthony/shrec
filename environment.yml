@@ -3,23 +3,24 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  - python=3.10
-  - numpy
-  - scipy
-  - scikit-learn
-  - umap-learn
-  - networkx
-  - matplotlib
-  - seaborn
-  - pandas
-  - h5py
-  - numba
-  - jupyterlab
-  - ipykernel
-  - ipywidgets
-  - python-igraph
-  - leidenalg
-  - pip
-  - pip:
-    - git+https://github.com/williamgilpin/shrec
-    - graspologic
+  - python=3.10.6
+  # below moved to project toml - TODO - move back notebook related here
+  # - numpy
+  # - scipy
+  # - scikit-learn
+  # - umap-learn
+  # - networkx
+  # - matplotlib
+  # - seaborn
+  # - pandas
+  # - h5py
+  # - numba
+  # - jupyterlab
+  # - ipykernel
+  # - ipywidgets
+  # - python-igraph
+  # - leidenalg
+  # - pip
+  # - pip:
+  #   - git+https://github.com/williamgilpin/shrec
+  #   - graspologic

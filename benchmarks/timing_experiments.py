@@ -22,7 +22,7 @@ import sktime.transformations.series.kalman_filter as kf
 
 import sys
 sys.path.append('../') ## Local import code from this repo
-from shrec.utils import *
+from shrec.utils.utils import *
 from shrec.models import *
 
 import jax.numpy as jnp

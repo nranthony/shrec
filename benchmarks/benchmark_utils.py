@@ -5,7 +5,7 @@ import dtw
 from sktime.performance_metrics.forecasting import mean_absolute_scaled_error
 
 from scipy.stats import spearmanr
-from shrec.utils import standardize_ts
+from shrec.utils.utils import standardize_ts
 
 # from mutual_info import mutual_information_scaled
 

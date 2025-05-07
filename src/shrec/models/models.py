@@ -1,21 +1,30 @@
+from sklearn.manifold import Isomap
+from scipy.stats import boxcox
+from scipy.optimize import minimize_scalar, root_scalar
+from sklearn.preprocessing import StandardScaler, PowerTransformer, MinMaxScaler
+from sklearn.base import BaseEstimator, ClusterMixin, TransformerMixin
+from scipy.optimize import root_scalar
+import scipy.sparse as sp
 import numpy as np
 import scipy
 import warnings
-import datetime
-try:
-    import pandas as pd
-    has_pandas = True
-except ImportError:
-    warnings.warn("Could not import pandas, missing value filling will not function.")
-    has_pandas = False
-
-from .utils import *
-from .utils import embed_ts, standardize_ts, minmax_ts, find_psd, common_neighbors_ratio, nan_fill
+from datetime import datetime
+import pandas as pd
+from shrec.utils import (
+    embed_ts, standardize_ts, detrend_ts, minmax_ts, find_psd, common_neighbors_ratio, nan_fill,
+    community_list_to_labels, adjmat_from_associations, hollow_matrix, sparsify, allclose_len)
 
 # from sklearn.cluster import SpectralClustering
 # from sklearn.manifold import SpectralEmbedding
 # from sklearn.decomposition import PCA
 from sklearn.decomposition import TruncatedSVD
+from scipy.spatial.distance import cdist
+from scipy.spatial import KDTree
+import scipy.sparse
+from scipy.optimize import fsolve
+from umap.umap_ import fuzzy_simplicial_set
+from scipy.sparse import coo_matrix
+
 
 def solve_union_find(lists):
     disjoint = DisjointSet()
@@ -29,7 +38,7 @@ def solve_union_find(lists):
 class DisjointSet:
     """
     A disjoint set data structure. 
-    
+
     Adapted fro open-source code:
     https://stackoverflow.com/questions/67805907
 
@@ -76,12 +85,11 @@ class DisjointSet:
         return result
 
 
-import scipy.sparse as sp
 def _leiden(g, method="graspologic", objective="modularity", resolution=1.0, random_state=None):
     """
     Compute the Leiden clustering of a graph, represented by a numpy matrix or a sparse
     matrix.
-    
+
     Args:
         g (ndarray or sparse_csr_matrix): a representation of a graph as a matrix or 
             sparse matrix.
@@ -91,17 +99,17 @@ def _leiden(g, method="graspologic", objective="modularity", resolution=1.0, ran
         resolution (float): the resolution parameter to use for the Leiden clustering
             algorithm.
         random_state (int or None): the random state to use for the Leiden clustering
-    
+
     Returns:
         indices (ndarray): An ordered list of indices of nodes in g
         labels (ndarray): A list of labels for each point in indices
-    
+
     """
     if objective not in ["modularity", "cpm"]:
         warnings.warn("Objective function not recognized; falling back to modularity")
         objective = "modularity"
 
-    ## Convert graph to appropriate format
+    # Convert graph to appropriate format
     if method in ["igraph", "leidenalg"]:
         import igraph as ig
 
@@ -115,7 +123,7 @@ def _leiden(g, method="graspologic", objective="modularity", resolution=1.0, ran
         else:
             g_nx = nx.convert_matrix.from_numpy_matrix(g)
 
-    ## Find communities
+    # Find communities
     if method == "graspologic":
         import graspologic
 
@@ -156,7 +164,7 @@ def _leiden(g, method="graspologic", objective="modularity", resolution=1.0, ran
         labels = cluster_membership._membership
         indices = np.arange(len(labels))
 
-    ## sort output
+    # sort output
     sort_inds = np.argsort(indices)
     indices, labels = indices[sort_inds], labels[sort_inds]
 
@@ -171,14 +179,10 @@ def _leiden(g, method="graspologic", objective="modularity", resolution=1.0, ran
 #
 ############################################################################
 
-from scipy.spatial.distance import cdist
-from scipy.spatial import KDTree
-import scipy.sparse
+
+def relu(x): return np.maximum(0, x)
 
 
-from scipy.optimize import fsolve
-
-relu = lambda x: np.maximum(0, x)
 def dataset_to_simplex(X, k=20, tol=1e-6, precomputed=False):
     """
     Given a dataset X, return the fuzzy simplicial simplex formed by the points in X
@@ -198,7 +202,7 @@ def dataset_to_simplex(X, k=20, tol=1e-6, precomputed=False):
         McInnes, Leland, John Healy, and James Melville. "Umap: Uniform manifold 
             approximation and projection for dimension reduction." 
             arXiv preprint arXiv:1802.03426 (2018).
-    
+
     """
     if not precomputed:
         dmat = cdist(X, X)
@@ -208,23 +212,21 @@ def dataset_to_simplex(X, k=20, tol=1e-6, precomputed=False):
     n = dmat.shape[0]
     dmat_zerofilled = dmat.copy()
     dmat_zerofilled[dmat_zerofilled < 1e-10] = np.inf
-    dists = np.partition(dmat_zerofilled, k + 1, axis=1) # distances to k nearest neighbors
+    dists = np.partition(dmat_zerofilled, k + 1, axis=1)  # distances to k nearest neighbors
     dists = np.sort(dists, axis=1)[:, 1:k+1]  # drop self
     # dists = np.sort(dmat, axis=1)[:, 1:k+1] # distances to k nearest neighbors
-    rho = dists[:, 0] # distance to the nearest neighbor
+    rho = dists[:, 0]  # distance to the nearest neighbor
     for i in range(n):
         # if dists[i, -1] < tol: # maximum distance is nearly zero
         #     dmat[i] = np.exp(-relu(dmat[i]) / (1e-8 + np.std(dmat[i])))
         #     continue
-        func = lambda sig: sum(np.exp(-relu(dists[i] - rho[i]) / sig)) - np.log2(k)
-        jac = lambda sig: sum(np.exp(-relu(dists[i] - rho[i]) / sig) * relu(dists[i] - rho[i])) / sig**2
+        def func(sig): return sum(np.exp(-relu(dists[i] - rho[i]) / sig)) - np.log2(k)
+        def jac(sig): return sum(np.exp(-relu(dists[i] - rho[i]) / sig) * relu(dists[i] - rho[i])) / sig**2
         sigma_i = fsolve(func, rho[i], fprime=jac, xtol=tol)[0]
         dmat[i] = np.exp(-relu(dmat[i] - rho[i]) / sigma_i)
     wmat = dmat + dmat.T - dmat * dmat.T
     return wmat
 
-from umap.umap_ import fuzzy_simplicial_set
-from scipy.sparse import coo_matrix
 
 def data_to_connectivity2(X, k=10, tol=1e-5, verbose=False):
     """
@@ -239,14 +241,14 @@ def data_to_connectivity2(X, k=10, tol=1e-5, verbose=False):
     Returns:
         wmat (np.ndarray): adjacency matrix of the simplex, with 
             shape (n_samples, n_samples)
-    
+
     """
     nb, nt, nd = X.shape
 
     if not verbose:
-        warnings.filterwarnings('ignore') ## fsolve often throws warnings
+        warnings.filterwarnings('ignore')  # fsolve often throws warnings
 
-    ## Use built-in implementation
+    # Use built-in implementation
     # wmat = np.zeros((nt, nt))
     # for ind, X0 in enumerate(X):
     #     if verbose and ind % (nb // 10) == 0:
@@ -264,21 +266,22 @@ def data_to_connectivity2(X, k=10, tol=1e-5, verbose=False):
         sigmas, rhos = np.asarray(sigmas), np.asarray(rhos)
         dmat = cdist(X0, X0)
         dmat = np.exp(-relu(dmat - rhos[None, :]) / sigmas[None, :])
-        dmat = dmat + dmat.T - dmat * dmat.T # symmetrize
+        dmat = dmat + dmat.T - dmat * dmat.T  # symmetrize
         wmat += dmat / nb
 
-    wmat  = np.asarray(wmat)
+    wmat = np.asarray(wmat)
     # wmat = np.array(wmat.todense())
 
     return wmat
 
-def data_to_connectivity(X, 
-                         time_exclude=0,  scale=1.0, 
+
+def data_to_connectivity(X,
+                         time_exclude=0,  scale=1.0,
                          ord=1.0, metric="euclidean"):
     """
     Given a stack of M time series, each of shape N x D, compute a 
     single consolidated N x N connectivity or adjacency matrix
-    
+
     Args:
         X (array-like): A list of coordinates of shape M x N x D, where M is the number 
             of time series, N is the number of time points, and D is their 
@@ -292,34 +295,34 @@ def data_to_connectivity(X,
             matrix is unmodified.
         ord (float): The order of the aggregation norm. Defaults to a order 1, which
             is a simple mean.
-        
+
     Returns:
         bd (array-like): A binarized distance matrix of shape N x N
     """
-    
+
     sel_inds = np.all(np.isclose(X, X[:, :1, :], 1e-12), axis=(1, 2))
     if np.sum(sel_inds) > 0:
-         warnings.warn(f"{np.sum(sel_inds)} Constant time series detected. " 
-                        + "Skipping these datasets.")
+        warnings.warn(f"{np.sum(sel_inds)} Constant time series detected. "
+                      + "Skipping these datasets.")
     X = X[np.logical_not(sel_inds)]
     nb, nt, nd = X.shape
-    
-    thresh =  np.median(
+
+    thresh = np.median(
         np.linalg.norm(X - np.median(X, axis=1, keepdims=True), axis=-1)
     )
     thresh = 1 / (scale * thresh)
-    
-    ## Iterate over all time series, compute distance matrix
+
+    # Iterate over all time series, compute distance matrix
     # dstack, bdstack = np.zeros((2, nb, nt, nt))
     bd = np.zeros((nt, nt))
 
     for i in range(nb):
-        dmat = cdist(X[i], X[i]) # pairwise distance matrix
-        ## Normalize and exponentiate to find connectivity matrix then mean merge
+        dmat = cdist(X[i], X[i])  # pairwise distance matrix
+        # Normalize and exponentiate to find connectivity matrix then mean merge
         surprise = dmat / np.std(dmat)
-        #thresh = 1.0
-        bd += (1 / nb) * np.exp(-surprise * ord / thresh) 
-    
+        # thresh = 1.0
+        bd += (1 / nb) * np.exp(-surprise * ord / thresh)
+
     # remove adjacent timescales by zeroing near-diagonals in distance matrix
     if time_exclude > 0:
         mask_mat = np.ones_like(bd)
@@ -333,17 +336,14 @@ def data_to_connectivity(X,
     bd = bd ** (1 / ord)
 
     return bd
-    
 
-
-from scipy.optimize import root_scalar
 
 def distance_to_connectivity(dmat, dscale=None, sparsity=None):
     """
     Convert a distance matrix to a connectivity matrix via an exponential transform
     If no crossover scale is specified, one is automatically computed based on a target
     sparsity in the output matrix
-    
+
     Args:
         dmat (array-like): An distance matrix of shape (N, N), or a stack of distance
             matrices of shape (B, N, N)
@@ -372,7 +372,7 @@ def distance_to_connectivity(dmat, dscale=None, sparsity=None):
     if sparsity is not None:
         dscale = -np.median(dmat) / np.log(1 - sparsity)
         denom = np.sum(np.ones_like(dmat))
-        optfun = lambda x: np.sum(np.exp(-dmat / x)) / denom - (1 - sparsity)
+        def optfun(x): return np.sum(np.exp(-dmat / x)) / denom - (1 - sparsity)
 
         scale_factor = root_scalar(optfun, bracket=[1e-16, dscale]).root
         connectivity = np.exp(-dmat / scale_factor)
@@ -389,17 +389,11 @@ def distance_to_connectivity(dmat, dscale=None, sparsity=None):
 ############################################################################
 
 
-from sklearn.base import BaseEstimator, ClusterMixin, TransformerMixin
-from sklearn.preprocessing import StandardScaler, PowerTransformer, MinMaxScaler
-from scipy.optimize import minimize_scalar, root_scalar
-from scipy.stats import boxcox
-import warnings
-
 class RecurrenceModel(BaseEstimator, ClusterMixin):
     """
     A base class for recurrent time series models. This class includes utilities for
     detecting recurrences, and consolidating distance matrices across an ensemble
-    
+
     Attributes:
         tolerance (float): The expected fraction of recurrence events in the time series
             This defaults to 1% of all timepoints. Increasing this parameter improves 
@@ -497,7 +491,7 @@ class RecurrenceModel(BaseEstimator, ClusterMixin):
         self.aggregation_order = float(aggregation_order)
         self.fill_nan = fill_nan
         self.verbose = verbose
-        
+
         np.random.seed(self.random_state)
 
     def _fillna(self, X):
@@ -511,14 +505,10 @@ class RecurrenceModel(BaseEstimator, ClusterMixin):
             X_filled (array-like): A time series of shape (N, d) or (N,) with NaN values
                 filled using forward filling
         """
-        if has_pandas:
-            Xc = pd.DataFrame(X)
-            Xc = Xc.fillna(method="ffill")
-            Xc = Xc.fillna(method="bill")
-            X_filled = Xc.values
-        else:
-            warnings.warn("Install pandas to use NaN filling")
-            X_filled = np.copy(X)
+        Xc = pd.DataFrame(X)
+        Xc = Xc.fillna(method="ffill")
+        Xc = Xc.fillna(method="bill")
+        X_filled = Xc.values
 
         return X_filled
 
@@ -534,22 +524,22 @@ class RecurrenceModel(BaseEstimator, ClusterMixin):
             X_embed (array-like): A time delay embedding of shape (N, d, d_embed)
         """
         np.random.seed(self.random_state)
-        
+
         if len(X.shape) == 2:
             X = np.reshape(X, (X.shape[0], -1))
             X_embed = embed_ts(X, self.d_embed, padding=self.padding)
         elif len(X.shape) == 3:
-            ## Multivariate
+            # Multivariate
             warnings.warn("Multivariate time series detected, embedding each "
                           + "dimension separately."
-                         )
+                          )
             all_embeddings = list()
             for i in X.shape[-1]:
                 X = np.reshape(X[..., i], (X.shape[0], -1))
                 all_embeddings.append(
                     embed_ts(
-                        np.reshape(X[..., i], (X.shape[0], -1)), 
-                        self.d_embed, 
+                        np.reshape(X[..., i], (X.shape[0], -1)),
+                        self.d_embed,
                         padding=self.padding
                     )
                 )
@@ -558,12 +548,12 @@ class RecurrenceModel(BaseEstimator, ClusterMixin):
         else:
             raise ValueError("Input shape not valid.")
 
-        ## Regularization
+        # Regularization
         if self.noise > 0.0:
             X_embed += self.noise * np.random.normal(size=X_embed.shape)
-            
+
         return X_embed
-    
+
     def _preprocess(self, X):
         """
         Preprocess the input dataset using a series of transformations
@@ -576,17 +566,17 @@ class RecurrenceModel(BaseEstimator, ClusterMixin):
         """
         if self.detrend:
             X = detrend_ts(X)
-        
+
         if self.power_transform:
             X = PowerTransformer().fit_transform(X)
-            
+
         if self.standardize:
             X = StandardScaler().fit_transform(X)
             X = standardize_ts(X)
 
         if self.fill_nan:
             X = self._fillna(X)
-        
+
         return X
 
     def _find_distance_matrix(self, X):
@@ -595,7 +585,7 @@ class RecurrenceModel(BaseEstimator, ClusterMixin):
 
         Args:
             X (np.ndarray): The input time series
-        
+
         Development: either parallelize or batch depending on size
         """
         all_dist_mat = np.sqrt(
@@ -614,7 +604,7 @@ class RecurrenceModel(BaseEstimator, ClusterMixin):
         Returns:
             clique_matrix (np.ndarray): binary adjacency matrix with augmented cliques
         """
-        #print("asymmetry: ", np.sum(np.abs(bdmat.T - bdmat)))
+        # print("asymmetry: ", np.sum(np.abs(bdmat.T - bdmat)))
         clique_matrix = adjmat_from_associations(
             hollow_matrix(bdmat),
             weighted=self.weighted_connectivity,
@@ -630,7 +620,7 @@ class RecurrenceModel(BaseEstimator, ClusterMixin):
         """
         return self.fit_predict(X, y)
 
-from sklearn.manifold import Isomap
+
 class HirataNomuraIsomap(RecurrenceModel):
     """
     An implementation of the recurrence manifold model of Hirata et al. (2008) using
@@ -641,11 +631,12 @@ class HirataNomuraIsomap(RecurrenceModel):
             for determining whether two nodes are neighbors.
         n_components (int): The number of components to use in the Isomap embedding.
     """
+
     def __init__(self, n_components=2, percentile=0.1, **kwargs):
         super().__init__(**kwargs)
         self.n_components = n_components
         self.percentile = percentile
-    
+
     def fit(self, X):
         np.random.seed(self.random_state)
         X0 = np.copy(X)
@@ -657,7 +648,7 @@ class HirataNomuraIsomap(RecurrenceModel):
         for i in range(X.shape[0]):
             dmat = cdist(X[i], X[i])
             thresh = np.percentile(dmat, self.percentile)
-            ## neighbor aggregation
+            # neighbor aggregation
             amat += (dmat <= thresh).astype(int)
         # Boolean aggregation
         amat[amat > 0] = 1
@@ -671,8 +662,8 @@ class HirataNomuraIsomap(RecurrenceModel):
 
         # Compare to spectral embedding
         # embedder = SpectralEmbedding(
-        #     n_components=self.n_components, 
-        #     random_state=self.random_state, 
+        #     n_components=self.n_components,
+        #     random_state=self.random_state,
         #     affinity='precomputed'
         # )
         # pt_vals = embedder.fit_transform(1 - wmat)
@@ -680,14 +671,14 @@ class HirataNomuraIsomap(RecurrenceModel):
         self.indices = np.arange(len(pt_vals))
         self.labels_ = nan_fill(pt_vals)
         return self
-    
+
     def transform(self, X):
         X = self._preprocess(X)
         X = self._make_embedding(X)
         wmat = common_neighbors_ratio(X)
         return wmat
-    
-    
+
+
 class ClassicalRecurrenceClustering(RecurrenceModel):
     """
     A classical implementation of recurrence clustering, using the original 
@@ -730,14 +721,14 @@ class ClassicalRecurrenceClustering(RecurrenceModel):
         X = self._preprocess(X)
         X = self._make_embedding(X)
 
-        dist_mat_bin = data_to_connectivity(X, 
-                                time_exclude=0,
-                                use_sparse=False,
-                                ord=500.,
-                                scale=self.scale
-                                )
+        dist_mat_bin = data_to_connectivity(X,
+                                            time_exclude=0,
+                                            use_sparse=False,
+                                            ord=500.,
+                                            scale=self.scale
+                                            )
         dist_mat_bin = sparsify(dist_mat_bin, (1 - self.tolerance), weighted=self.weighted_connectivity)
-        
+
         if self.store_adjacency_matrix:
             self.adjacency_matrix = dist_mat_bin
 
@@ -801,21 +792,21 @@ class RecurrenceClustering(RecurrenceModel):
 
         """
         np.random.seed(self.random_state)
-            
+
         X = self._preprocess(X)
         X = self._make_embedding(X)
-        
-        dist_mat_bin = data_to_connectivity(X, 
-                            time_exclude=self.time_exclude,
-                            # use_sparse=self.use_sparse,
-                            ord=self.aggregation_order,
-                            scale=self.scale
-                            )
+
+        dist_mat_bin = data_to_connectivity(X,
+                                            time_exclude=self.time_exclude,
+                                            # use_sparse=self.use_sparse,
+                                            ord=self.aggregation_order,
+                                            scale=self.scale
+                                            )
         #  dist_mat_bin =  = data_to_connectivity2(X)
 
         dist_mat_bin = sparsify(dist_mat_bin, (1 - self.tolerance), weighted=self.weighted_connectivity)
-        #neighbor_matrix = self._neighbors_to_cliques(dist_mat_bin)
-        neighbor_matrix = dist_mat_bin 
+        # neighbor_matrix = self._neighbors_to_cliques(dist_mat_bin)
+        neighbor_matrix = dist_mat_bin
 
         if self.store_adjacency_matrix:
             self.adjacency_matrix = neighbor_matrix
@@ -844,6 +835,7 @@ class RecurrenceManifold(RecurrenceModel):
     Assign continuous time labels to a set of timepoints by finding recurrence families
      across multiple time series measurements
     """
+
     def __init__(self, n_components=1, **kwargs):
         super().__init__(**kwargs)
         self.n_components = n_components
@@ -862,20 +854,19 @@ class RecurrenceManifold(RecurrenceModel):
         X0 = np.copy(X)
         X = self._preprocess(X)
         X = self._make_embedding(X)
-        
 
         if self.verbose:
             print("Computing distance matrix... ", flush=True, end='')
-            
-        # Slowest step: compute the distance matrix for each example      
-        ## an alternative approach that dodges the optimizer
+
+        # Slowest step: compute the distance matrix for each example
+        # an alternative approach that dodges the optimizer
         t1 = datetime.now()
 
-        bd = data_to_connectivity(X, 
-                            time_exclude=self.time_exclude,
-                            ord=self.aggregation_order,
-                            scale=self.scale
-                            )
+        bd = data_to_connectivity(X,
+                                  time_exclude=self.time_exclude,
+                                  ord=self.aggregation_order,
+                                  scale=self.scale
+                                  )
         # bd = data_to_connectivity2(X)
         t2 = datetime.now()
         elapsed = t2 - t1
@@ -884,11 +875,11 @@ class RecurrenceManifold(RecurrenceModel):
 
         neighbor_matrix = bd
 
-        # self.uncompressed_matrix = neighbor_matrix.copy()            
+        # self.uncompressed_matrix = neighbor_matrix.copy()
         # neighbor_matrix = matrix_lowrank(neighbor_matrix, 1)
         # root_index = np.argmin(np.min(neighbor_matrix, axis=1))
         # self.root_index = root_index
-        
+
         # rescale
         # neighbor_matrix = (neighbor_matrix - np.min(neighbor_matrix) + 1e-6) / (np.max(neighbor_matrix) - np.min(neighbor_matrix) + 1e-6)
         if self.verbose:
@@ -898,14 +889,14 @@ class RecurrenceManifold(RecurrenceModel):
             self.adjacency_matrix = neighbor_matrix
 
         # eigvals, eigvecs = scipy.linalg.eigh(
-        #     neighbor_matrix, 
+        #     neighbor_matrix,
         #     subset_by_index=[neighbor_matrix.shape[0]-2, neighbor_matrix.shape[0]-1]
         # )
         # pt_vals = eigvecs[:, -1]
 
         # embedder = SpectralEmbedding(
-        #     n_components=self.n_components, 
-        #     random_state=self.random_state, 
+        #     n_components=self.n_components,
+        #     random_state=self.random_state,
         #     affinity='precomputed'
         # )
         # pt_vals = embedder.fit_transform(neighbor_matrix).squeeze()
@@ -920,5 +911,3 @@ class RecurrenceManifold(RecurrenceModel):
 
         self.indices = np.arange(len(pt_vals))
         self.labels_ = nan_fill(pt_vals)
-
-
