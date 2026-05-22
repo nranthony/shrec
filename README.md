@@ -19,35 +19,29 @@ Additional examples can be found in the [`demos.ipynb`](demos.ipynb) notebook.
 
 ## Installation
 
-Install the latest development version directly from GitHub
+This project uses [uv](https://docs.astral.sh/uv/) to manage the virtual environment and dependencies.
+
+Install `uv` if you don't already have it (see the [uv install docs](https://docs.astral.sh/uv/getting-started/installation/)), then:
 
 	git clone https://github.com/williamgilpin/shrec
 	cd shrec
-	pip install -I . 
+	uv sync
 
-Alternatively, using pip
+This creates a `.venv/` in the project root with all dependencies from `pyproject.toml` installed. Activate it with:
 
-	pip install git+https://github.com/williamgilpin/shrec
+	source .venv/bin/activate
 
-Test that everything is working
+Or run commands directly through uv without activating:
 
-    python -m unittest
-    
-## Additional information
+	uv run python -m unittest
+	uv run jupyter lab
 
-Install core dependencies
+### Removing the old conda/mamba environment
 
-	conda install numpy scipy matplotlib networkx h5py numba
+If you previously installed this project with the now-removed `environment.yml`, drop the old env:
 
-<!-- Install scanpy using conda. If you are using bash, you may need to remove the quotes around networkx
-
-	conda install -c conda-forge scikit-learn scanpy python-igraph leidenalg 
-	pip3 install --upgrade-strategy only-if-needed graspologic 'networkx[default]' -->
-
-Install optional dependencies
-
-	conda install -c conda-forge jupyterlab
-	conda install seaborn pandas 
+	conda env remove -n shrec    # or: mamba env remove -n shrec
+	conda clean -a               # optional: free up disk space
 
 Dependencies
 + scikit-learn

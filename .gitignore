@@ -23,6 +23,9 @@ DynamicalComponentsAnalysis/
 ### Remove DS STORE
 .DS_Store
 
+### uv / virtualenv ###
+.venv/
+
 ### Python ###
 # Byte-compiled / optimized / DLL files
 __pycache__/
