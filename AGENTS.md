@@ -1,4 +1,4 @@
-# Gemini
+# Agents
 
 See [`CLAUDE.md`](CLAUDE.md) for the canonical agent onboarding doc.
 It covers project purpose, the paper-to-code mapping

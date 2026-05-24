@@ -61,9 +61,10 @@ class DrivenLorenz:
             self.rhs_driver= self._rhs_rossler
         
         # response properties
-#         self.ar = 1.2
-#         self.mu = 8.53
-#         self.w = 0.63
+        # `ar` is the driver-response coupling strength used at lines
+        # 144-145 (rhs_response_ensemble); previously commented out, which
+        # made every call to rhs() raise AttributeError.
+        self.ar = 1.2
         self.rho = 28
         self.beta = 2.667
         self.sigma = 10

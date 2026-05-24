@@ -234,86 +234,22 @@ def minmax_ts(a, clipping=None):
     return np.squeeze(ts_scaled)
 
 
-def embed_ts(X, m, padding=None):
-    """
-    Create a time delay embedding of a time series or a set of time series
-
-    Args:
-        X (array-like): A matrix of shape (n_timepoints, n_dims) or 
-            of shape (n_timepoints)
-        m (int): The number of dimensions
-
-    Returns:
-        Xp (array-like): A time-delay embedding
-    """
-    if padding:
-        if len(X.shape) == 1:
-            X = np.pad(X, [m, 0], padding)
-        if len(X.shape) == 2:
-            X = np.pad(X, [[m, 0], [0, 0]], padding)
-        if len(X.shape) == 3:
-            X = np.pad(X, [[0, 0], [m, 0], [0, 0]], padding)
-    Xp = hankel_matrix(X, m)
-    Xp = np.moveaxis(Xp, (0, 1, 2), (1, 2, 0))
-    return Xp
-
-
-def hankel_matrix(data, q, p=None):
-    """
-    Find the Hankel matrix dimensionwise for multiple multidimensional 
-    time series
-
-    Args:
-        data (ndarray): An array of shape (N, T, 1) or (N, T, D) corresponding to a 
-            collection of N time series of length T and dimensionality D
-        q (int): The width of the matrix (the number of features)
-        p (int): The height of the matrix (the number of samples)
-
-    Returns:
-        hmat (ndarray)
-
-    """
-
-    if len(data.shape) == 3:
-        return np.stack([_hankel_matrix(item, q, p) for item in data])
-
-    if len(data.shape) == 1:
-        data = data[:, None]
-    hmat = _hankel_matrix(data, q, p)
-    return hmat
-
-
-def _hankel_matrix(data, q, p=None):
-    """
-    Calculate the hankel matrix of a multivariate timeseries
-
-    Args:
-        data (ndarray): T x D multidimensional time series
-    """
-    if len(data.shape) == 1:
-        data = data[:, None]
-
-    # Hankel parameters
-    if not p:
-        p = len(data) - q
-    all_hmats = list()
-    for row in data.T:
-        first, last = row[-(p + q): -p], row[-p - 1:]
-        out = hankel(first, last)
-        all_hmats.append(out)
-    out = np.dstack(all_hmats)
-    return np.transpose(out, (1, 0, 2))[:-1]
+# Time-delay embedding lives in shrec.embeddings; re-exported here for
+# backwards-compatible imports (`from shrec.utils import embed_ts`).
+from shrec.embeddings import embed_ts, hankel_matrix, _hankel_matrix  # noqa: F401
 
 
 def allclose_len(arr1, arr2):
-    """Test whether all entries are close, and return False
-    if different shapes"""
-    close_flag = False
-    try:
-        close_flag = np.allclose(arr1, arr2)
-    except ValueError:
-        close_flag = False
-    return close_flag
+    """Test whether all entries are close, and return False if different shapes.
+
+    np.allclose broadcasts before comparing, so it returns True for inputs
+    of mismatched-but-broadcastable shape (e.g. (3,) vs (2, 3)). Explicit
+    shape comparison is required to honour the documented contract.
+    """
+    arr1, arr2 = np.asarray(arr1), np.asarray(arr2)
+    if arr1.shape != arr2.shape:
+        return False
+    return bool(np.allclose(arr1, arr2))
 
 
 def array2d_to_list(arr):

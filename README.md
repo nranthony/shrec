@@ -33,8 +33,12 @@ This creates a `.venv/` in the project root with all dependencies from `pyprojec
 
 Or run commands directly through uv without activating:
 
-	uv run python -m unittest
+	uv run pytest
 	uv run jupyter lab
+
+The dev dependency group (`pytest`, `pytest-cov`, `hypothesis`, `pypdf`)
+is installed automatically by `uv sync`; use `uv sync --no-dev` for a
+runtime-only environment.
 
 ### Removing the old conda/mamba environment
 
@@ -64,5 +68,13 @@ Additional dependencies for certain demonstrations
 ## Development and Contributing
 
 We welcome any suggestions or improvments. Please feel free to reach reach out, raise issues, or submit pull requests.
+
+If you're working on this repo with an AI coding agent, the onboarding
+guidance lives in [`CLAUDE.md`](CLAUDE.md) (with `GEMINI.md` and
+`AGENTS.md` redirecting there). The current paper-to-code map is in
+[`docs/architecture.md`](docs/architecture.md); the math-correctness
+test catalog is in [`docs/tests-math.md`](docs/tests-math.md); and the
+frozen record of the 2026-05 modularisation refactor lives under
+[`docs/history/`](docs/history/).
 
 

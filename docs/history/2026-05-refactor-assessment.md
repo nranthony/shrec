@@ -1,45 +1,20 @@
-# shrec — code assessment and modularization plan
+# 2026-05 refactor assessment (frozen historical record)
 
-Working from `src/shrec/` (≈ 60 KB of Python across `models/models.py` and seven `utils/*.py` files) and the paper *Recurrences Reveal Shared Causal Drivers of Complex Time Series*, Gilpin, **Phys. Rev. X 15, 011005 (2025)** (arXiv:2301.13516).
-
----
-
-## 1. Paper-level summary (what the code must implement)
-
-SHREC reconstructs an unobserved driver `z(t)` from `N` observed responses `x_k(t)`. The pipeline (paper Appendix B):
-
-1. **Time-delay embed** each response: `ŷ_k(t) = [x_k(t), x_k(t-τ), …, x_k(t-(D-1)τ)]ᵀ` ∈ ℝ^(T×D).
-2. **Per-response pairwise distances**: `d^(k)_ij = ‖ŷ_k(i) − ŷ_k(j)‖`.
-3. **Per-response fuzzy simplicial complex** (adaptive recurrence):
-   - For each row `i`, take the `M` nearest neighbours; set `ρ_i = min_m d_im`.
-   - Numerically solve for `σ_i` such that `log₂ M = Σ_m exp[-ReLU(d_im − ρ_i)/σ_i]`.
-   - Affinity `A^(k)_ij = exp[-ReLU(d^(k)_ij − ρ_i)/σ_i]`. Symmetrise via fuzzy union `A + Aᵀ − A∘Aᵀ`.
-4. **Consensus aggregation** across responses: `A_ij = (1/K) Σ_k A^(k)_ij` (paper uses mean; the code generalises to a `p`-norm via `aggregation_order`).
-5. **Driver reconstruction**:
-   - **Discrete driver** → Leiden community detection on `A`; cluster labels are the driver symbols.
-   - **Continuous driver** → graph Laplacian `L = D − A`; the **Fiedler eigenvector** (first non-constant eigenvector) is the reconstructed driver.
-
-The paper also reports two baselines that live in this repo:
-
-- `ClassicalRecurrenceClustering` — Sauer (PRL 2004) exact equivalence-class union-find on binary recurrences (the noise-free limit case).
-- `HirataNomuraIsomap` — Hirata/Nomura: common-neighbour-ratio weighting + Isomap embedding.
-
----
-
-## 2. Code → paper mapping
-
-| Paper step                              | Where in `src/shrec/`                                                                                  |
-|-----------------------------------------|--------------------------------------------------------------------------------------------------------|
-| Time-delay embedding                    | `utils/preprocessing.py:embed_ts` / `hankel_matrix`; `models.RecurrenceModel._make_embedding`          |
-| Pairwise distance                       | `cdist(...)` inside `models.data_to_connectivity*`; unused `RecurrenceModel._find_distance_matrix`     |
-| ρ/σ root-find + simplicial complex      | **Two implementations**: `models.dataset_to_simplex` (custom `fsolve`) and `models.data_to_connectivity2` (calls `umap.umap_.fuzzy_simplicial_set`) |
-| Consensus / p-norm aggregation          | `models.data_to_connectivity` (exp-of-distance, not the fuzzy simplex), `data_to_connectivity2`        |
-| Discrete driver (Leiden)                | `models._leiden` (wraps graspologic / leidenalg / igraph / cdlib) → `RecurrenceClustering`             |
-| Continuous driver (Fiedler)             | `RecurrenceManifold.fit` — **but** uses `TruncatedSVD` on `A`, not Laplacian eigh. See §3.             |
-| Sauer baseline                          | `models.ClassicalRecurrenceClustering`, `models.solve_union_find`, `models.DisjointSet`                |
-| Hirata–Nomura baseline                  | `models.HirataNomuraIsomap` + `utils/graph_tools.common_neighbors_ratio`                               |
-
-The fuzzy-simplicial helpers `dataset_to_simplex` and `data_to_connectivity2` exist but are not wired into any production path — `RecurrenceManifold`/`RecurrenceClustering` call `data_to_connectivity`, which is the *exp(-d/scale)* recurrence variant, not the paper's adaptive ρ/σ construction. Worth deciding whether this is intentional.
+> **Status: completed 2026-05-23.** This document is the original
+> static audit + modularisation plan, kept as a frozen record of the
+> reasoning behind the May 2026 refactor. **Do not edit it as a live
+> plan** — for the current architecture map see
+> [`docs/architecture.md`](../architecture.md), and for the live math-
+> test catalog see [`docs/tests-math.md`](../tests-math.md).
+>
+> The original §1 (paper summary) and §2 (code → paper mapping) have
+> been promoted to `architecture.md`; the math-correctness catalog
+> (§5b) has been promoted to `tests-math.md`. What remains below is
+> the audit findings (§3), the proposed layout (§4, now implemented),
+> the structural test plan (§5), the work plan (§6), and the
+> author's caveats (§7) — all of which informed the actual refactor
+> and are useful as historical context but should not be read as
+> guidance for new work.
 
 ---
 
@@ -59,11 +34,24 @@ The fuzzy-simplicial helpers `dataset_to_simplex` and `data_to_connectivity2` ex
 | 8 | `models._leiden` | If `method` doesn't match the four supported values, `indices` and `labels` are never assigned, then dereferenced at the return. Needs an explicit `else: raise ValueError`. |
 | 9 | `utils/preprocessing.py:allclose_len` | `np.allclose` happily broadcasts mismatched-but-broadcastable shapes (e.g. `(3,)` vs `(3, 4)`) and returns True. The comment promises "False if different shapes". Should check `shape ==` first. |
 
+**Outcome (2026-05):** A1, A2, A3, A4, A5, A7, A8, A9 fixed in the
+bug-fix PR with regression tests. A6 fixed in the modularisation PR
+(`np.random.default_rng` plumbing; MM18 / MM31 pin it).
+
 ### B. Algorithmic deviation from the paper
 
 - **`RecurrenceManifold` uses TruncatedSVD on `A`**, then takes the second right singular vector (line 904–906). The paper specifies the Fiedler eigenvector of the **graph Laplacian** `L = D − A`. For an exactly symmetric, doubly-stochastic `A`, these are related but not identical; for the current code, `A` is symmetric but **not normalised**, so the SVD-based output deviates further from the paper. Commented-out alternatives in the file (`SpectralEmbedding`, `scipy.linalg.eigh`) suggest this was experimented with. **Decide and document one canonical implementation.**
 
 - **`RecurrenceClustering` / `RecurrenceManifold` do not actually use the fuzzy simplicial complex.** They call `data_to_connectivity` (exp-of-distance, fixed scale). The paper's adaptive ρ/σ complex (`dataset_to_simplex`, `data_to_connectivity2`) is in the codebase but unused by the default models. This is a meaningful discrepancy between the paper and what `RecurrenceManifold().fit_predict(X)` actually computes.
+
+**Outcome (2026-05):** Both deviations closed in the canonical-
+algorithm PR. `RecurrenceManifold` now uses
+`scipy.linalg.eigh(L = D − A)` (MM22 oracle). `RecurrenceClustering`
+and `RecurrenceManifold` both call `data_to_connectivity2`
+(simplicial); `data_to_connectivity` is retained only by
+`ClassicalRecurrenceClustering` as its Sauer baseline kernel. MM19
+green at ARI > 0.95; MM20 deferred (Leiden under-segments period-4
+at default resolution — xfail with note).
 
 ### C. Architectural / module-organisation smells
 
@@ -77,6 +65,17 @@ The fuzzy-simplicial helpers `dataset_to_simplex` and `data_to_connectivity2` ex
 - **`root_index` parameter** on `RecurrenceManifold.fit` is unused (the body uses it only inside commented-out lines).
 - **Sklearn API leak**: `RecurrenceModel` inherits `ClusterMixin` but the manifold model produces continuous values, not cluster labels. `RecurrenceManifold` should inherit `TransformerMixin` (and expose `transform`, not `fit_predict`).
 
+**Outcome (2026-05):** `models.py` split into per-file modules
+(`base.py`, `recurrence_clustering.py`, `recurrence_manifold.py`,
+`classical.py`, `hirata_nomura.py`). `_make_embedding` extracted to
+`embeddings.make_embedding`. The simplicial / Leiden / union-find
+pieces moved into `recurrence/` and `graph/` subpackages. `fit`
+signatures normalised to `fit(X, y=None)` returning `self`; dead
+kwargs (`use_sparse`, `root_index`, `weighted`) dropped. The
+ClusterMixin/TransformerMixin issue is **not yet addressed** —
+`RecurrenceManifold` still inherits `ClusterMixin`; tracked as
+follow-up.
+
 ### D. Performance issues
 
 - **All-pairs `cdist` matrix** is allocated densely (`O(T²)`) for every response, then again as a `(T, T)` consensus. Paper claims `O(E)` cost; the implementation is `O(T²·N)`. Pre-pruning to a sparse k-NN graph before averaging would fix this.
@@ -84,15 +83,31 @@ The fuzzy-simplicial helpers `dataset_to_simplex` and `data_to_connectivity2` ex
 - **`compress_adjacency`** rebuilds the Pearson matrix on every merge → `O(T⁴)` for `T`-node compression. Won't scale past a few hundred nodes.
 - **`data_to_connectivity2`** materialises a dense `(T, T)` `coo_matrix` (defeating the sparse type) before summing — combine sparse incrementally.
 
+**Outcome (2026-05):** `common_neighbors_ratio` vectorised (MM12 pins
+parity with the loop). The other three performance issues remain
+open — meaningful targets for a follow-up perf PR.
+
 ### E. Tests as they stand
 
 `tests/test_models.py` (60 lines) covers two of the four models, with identical synthetic data (`np.sin` tiled three times), and only asserts label-vector length matches input length — not numerical correctness, not behaviour under noise, not the discrete/continuous distinction. Coverage of `utils/` is **zero**. `sys.path.insert` is used instead of relying on the installed package.
+
+**Outcome (2026-05):** Test suite grew from 2 unittest tests to
+39 pytest tests + 2 documented xfails. `pytest.importorskip` gates
+optional backends. The legacy `tests/test_models.py` is preserved as
+a smoke test only — all new tests live in dedicated per-module files.
 
 ---
 
 ## 4. Proposed module layout
 
-The principle: each file does one thing, has explicit public exports, and is unit-testable in isolation. Naming kept conservative to minimise downstream notebook churn — old import paths can be preserved via shim re-exports in `models/__init__.py` and `utils/__init__.py`.
+> **Implemented as proposed (with minor simplifications).** See
+> `docs/architecture.md` §4 for the actual post-refactor layout.
+
+The principle: each file does one thing, has explicit public exports,
+and is unit-testable in isolation. Naming kept conservative to
+minimise downstream notebook churn — old import paths can be
+preserved via shim re-exports in `models/__init__.py` and
+`utils/__init__.py`.
 
 ```
 src/shrec/
@@ -160,9 +175,33 @@ Notes:
 - **`fit` signatures** are nullary (just `X, y=None`) — all behavioural knobs live on `__init__`.
 - **Public API** (`src/shrec/__init__.py`) re-exports the four models and the most-used building blocks. Notebooks keep `from shrec.models import RecurrenceManifold` working.
 
+**Outcome (2026-05):** Implemented with two simplifications:
+
+- `recurrence/distance.py` and `recurrence/sparsify.py` were folded
+  into `recurrence/simplicial.py` / `utils/metrics.py` — they were
+  too small to justify separate modules at this size.
+- `utils/` was kept as a single sub-package rather than split out
+  to top-level `signal.py`, `surrogates.py`, etc. Same reasoning:
+  not enough mass to justify the additional surface.
+
 ---
 
 ## 5. Per-module test plan
+
+> **Partially implemented.** The "must" tests in §5b drove the
+> canonical-algorithm fix and are the live source of truth; the
+> §5 structural tests below were implemented where they corresponded
+> to a real bug (A1, A2, A3) and skipped where the function was
+> already trivially correct. New per-module test files added during
+> the refactor are: `tests/test_models_base.py`,
+> `tests/test_models_classical.py`,
+> `tests/test_models_recurrence_clustering.py`,
+> `tests/test_models_recurrence_manifold.py`,
+> `tests/test_models_invariances.py`,
+> `tests/test_recurrence_simplicial.py`,
+> `tests/test_graph_communities.py`,
+> `tests/test_graph_adjacency.py`,
+> `tests/test_benchmarks_dynamical_systems.py`.
 
 Each test file is one-to-one with a module. I'd switch from `unittest` to **pytest** to get parametrisation, fixtures, and `pytest.mark.parametrize` for the cross-method sweeps. `pytest-cov` for coverage; `hypothesis` is optional but pays off for array/graph utilities.
 
@@ -289,98 +328,26 @@ Each test file is one-to-one with a module. I'd switch from `unittest` to **pyte
 
 ---
 
-## 5b. Math-correctness tests (the part that proves the algorithm is right, not just present)
-
-The tests in §5 catch *structural* bugs — typos, signature mismatches, shape errors. They cannot tell you whether SHREC is computing what the paper says it computes. Below is a second layer of tests whose oracles come from analytical results, limiting cases, and explicit claims in the paper. These are what would let you ship a refactor with confidence.
-
-Notation: "must-have" = catches a class of bugs that §5 cannot. "regression" = guards a property over time but won't fail on a fresh implementation if math is right.
-
-### §5b.1 — Closed-form unit tests of the inner math
-
-These don't need a time series at all; they probe individual operators with inputs whose answers can be written down.
-
-| Test | Module | Oracle |
-|---|---|---|
-| **MM1 (must)** | `recurrence/simplicial.py:fit_rho_sigma` | The defining equation is satisfied: for arbitrary `d_row` (random, sorted), the returned `(ρ, σ)` give `\|Σ_m exp[-ReLU(d_im − ρ)/σ] − log₂ k\| < 1e-6`. |
-| **MM2 (must)** | same | **Scale invariance**: for any `α > 0`, `fit_rho_sigma(α · d_row, k) = (α·ρ, α·σ)`, so the final affinity `A^(k)_ij(α·d) ≡ A^(k)_ij(d)`. This is the strongest single algebraic property of the simplicial complex; if anyone ever changes the σ root-find, this test catches it. |
-| **MM3 (must)** | same | **Diagonal**: `A^(k)_ii = exp(-ReLU(0 − ρ_i)/σ_i) = 1` exactly, because `d_ii = 0 ≤ ρ_i` (nearest-neighbour distance is the *smallest non-zero* distance, but the row distance to self is 0). Verify after `hollow_matrix` is *not* applied. |
-| **MM4 (must)** | `fuzzy_simplicial_complex` | **Symmetrisation range**: `A + Aᵀ − A∘Aᵀ ∈ [0, 1]^(N×N)` for any `A ∈ [0, 1]^(N×N)`. Symmetric output: `‖S − Sᵀ‖_∞ = 0`. |
-| **MM5 (must)** | `recurrence/simplicial.py` vs `data_to_connectivity2` | **Cross-implementation parity**: `dataset_to_simplex(X, k=M)` and `umap.umap_.fuzzy_simplicial_set(X, M, ...)` produce affinity matrices that agree to within `atol=1e-5` on a random `(50, 3)` input. The repo carries two implementations of the *same* paper formula; if they disagree, one is wrong. This single test triages a question that the §3B audit raised but couldn't resolve statically. |
-| **MM6 (must)** | `recurrence/kernel.py:exp_recurrence` | **p-norm limits**: with `ord=1` the consensus is the elementwise mean of `exp(-d^(k)/scale)` over `k`; with `ord → ∞` it approaches the *min over k* of `d^(k)` (Sauer's `d*_ij = inf_k d^(k)_ij`). Verify both with a stack of two analytically chosen distance matrices. Currently `ClassicalRecurrenceClustering` relies on this with `ord=500`; if the formula drifts, the Sauer baseline silently degrades. |
-| MM7 | `pairwise_distances` | **Isometry invariance**: for random orthogonal `Q ∈ ℝ^(D×D)` and translation `c ∈ ℝ^D`, `cdist(X@Q + c, X@Q + c) == cdist(X, X)`. |
-| MM8 | `pairwise_distances` | **Triangle inequality** holds on every triple `(i, j, k)` of a `cdist` matrix on random points (statistical sanity check). |
-| MM9 | `sparsify_by_quantile` | Output sparsity ≥ target sparsity (with strict equality if no ties in `|a|`). Idempotent under repeated application at the same threshold. |
-| **MM10 (must)** | `graph/communities.py:_leiden` | **Backend agreement**: on the barbell graph `K₅ — K₅` (two cliques joined by a bridge), every available Leiden backend returns exactly 2 communities with `adjusted_rand_score(labels_a, labels_b) == 1.0` pairwise. Paper §II.B says "performance is insensitive to the choice of community detection algorithm" — make that explicit. |
-| MM11 | `graph/unionfind.py` | **Parity with `scipy.cluster.hierarchy.DisjointSet`** on random union sequences (Hypothesis-style: any sequence of `(a, b)` pairs). |
-| MM12 | `graph/adjacency.py:common_neighbors_ratio` | **Closed-form values**: on `K_n` (complete graph), output is zero off-diagonal. On the disjoint union `K_a ⊔ K_b`, the inter-cluster value is exactly 1. After vectorising (see §3D), the new implementation matches the old on random binary matrices to `atol=0`. |
-
-### §5b.2 — Algorithmic invariances and equivariances
-
-These are properties the *whole* `fit_predict` pipeline must satisfy on principled grounds (recurrence is undirected; the model has no preferred response order; etc.). Each is a one-line test against a baseline run.
-
-| Test | Property | Why |
-|---|---|---|
-| **MM13 (must)** | `model.fit_predict(X)` is **permutation-invariant in the response axis** (`X[:, perm]` → same labels up to label permutation, ARI=1). | A response is a response — order is not data. If a future refactor introduces order dependence, this catches it immediately. |
-| **MM14 (must)** | **Time-reversal symmetry** for the recurrence-graph stage: `A(X[::-1]) == A(X)[::-1, ::-1]` exactly (before community detection). For `RecurrenceClustering`, `fit_predict(X[::-1])` and `fit_predict(X)[::-1]` agree up to label permutation (ARI=1). | The fuzzy simplicial complex only sees distances, not time direction. Asymmetric output ⟹ bug. |
-| MM15 | **Scale invariance** of the whole pipeline w.r.t. each response: scaling `X[:, k]` by an arbitrary positive constant doesn't change the labels (because the simplicial complex is scale-invariant per MM2, and standardisation is on by default). | Cross-checks that pre-processing doesn't leak scale into the answer. |
-| MM16 | **Idempotence on a single repeated response**: if all `N` responses are copies of one signal, `fit_predict` matches `fit_predict` of just that one signal (up to label permutation). | The mean-aggregation step must not amplify or attenuate identical signals. |
-| MM17 | **Constant-response rejection**: a response that is constant in time is skipped (current code has this filter at `data_to_connectivity:303`). Stacking a constant response on a varying one yields the same answer as the varying one alone. | Defensive — pin the existing behaviour so a refactor doesn't accidentally include constants and produce NaNs. |
-| MM18 | **Determinism w.r.t. `random_state`**: two models with the same seed produce bit-identical outputs; two models with different seeds produce different outputs on a problem where the answer is seed-sensitive (small N, noisy). | Catches the `np.random.seed` global-state bug in §3A item 6 once we move to `default_rng`. |
-
-### §5b.3 — Limiting-case oracles (closed-form ground truth)
-
-These are inputs constructed so the answer is provably the one we want.
-
-| Test | Input | Oracle |
-|---|---|---|
-| **MM19 (must)** | **Sauer limit, period-2 driver**. Drive `N=20` distinct chaotic logistic maps (random `r^(k) ~ U(3.81, 3.97)`) with `z_t = (-1)^t`, `κ = 0.5`, zero noise, `T = 1000`. | `RecurrenceClustering().fit_predict(X)` returns exactly 2 communities with `adjusted_rand_score(labels_pred, z) == 1.0`. **Paper §II.B, line 461 and §III.D, line 570 both claim SHREC reduces to exact equivalence classes in this limit — this test makes the claim falsifiable.** |
-| **MM20 (must)** | **Sauer limit, period-4 driver**. As MM19 but `z_t` cycles through 4 distinct levels. | Exactly 4 communities, ARI = 1. |
-| MM21 | **Period-8 driver, with stochastic forcing** (`σ_noise = 0.04`). | ARI > 0.85 — this is no longer a hard claim but the paper's Fig. 6(a) shows the period-8 case still hits the upper plateau at this noise level. Regression test. |
-| **MM22 (must)** | **Block-stochastic affinity matrix**. Skip the time series entirely: hand-construct `A = block_diag(J_p / p, J_p / p, J_p / p)` with `K = 3` blocks of size `p = 20`. | The **Fiedler eigenvector of `L = D − A`** is constant within each block and takes 3 distinct values whose signs partition the blocks. Compare `RecurrenceManifold`'s output (after `fit` on the precomputed affinity) to this analytical Fiedler vector via `|corr| > 0.99`. **This is the test that exposes the SVD-vs-Laplacian deviation flagged in §3B; the current code will fail it. Use it to drive the fix and lock in the fixed behaviour.** |
-| MM23 | **Cycle graph affinity**. `A_ij = 1 if |i−j|=1 (mod n) else 0`. | Laplacian eigenvalues are `2(1 − cos(2π k/n))`; the Fiedler eigenvector is `v_i = cos(2π i / n)` (or `sin`). `RecurrenceManifold`'s output equals this up to sign with `|corr| > 0.999`. Pure closed-form check of the spectral step. |
-| MM24 | **Identity-driver test**. `N = 1`, `x(t) = z(t)` where `z` is the Rössler `z₁` trajectory (continuous chaotic driver). | Spearman correlation `|ρ| > 0.95`. The synchronised regime with no measurement filter — should be the easiest possible case. |
-| MM25 | **Linear measurement test**. `x_k(t) = a_k · z(t) + b_k` with random `a_k > 0, b_k`. | `|ρ| > 0.9` despite per-channel affine corruption (because standardisation removes `a_k, b_k`). |
-| MM26 | **Nonlinear monotone measurement**. `x_k(t) = tanh(z(t)/σ_k)` with random `σ_k`. | `|ρ| > 0.8`. Tests that the algorithm handles channel-wise *monotone but non-affine* response filters. |
-
-### §5b.4 — Paper-claim regression tests (quantitative scaling laws)
-
-Two tests that turn paper figures into pass/fail checks. They are slower (involve sweeps) and so should run only under `-m slow` or in CI nightly.
-
-| Test | Claim (paper section) | Oracle |
-|---|---|---|
-| **MM27 (must)** | **β-distribution accuracy scaling**, Appendix E.2 line 1751: `Acc(NT/τ) = Acc_max (1 − exp(−β √(NT/τ)))`. | For the period-4 logistic ensemble at default `σ_noise = 0.04, κ = 0.5`, run `N ∈ {2, 4, 8, 16, 32, 64}` and `T = 3000`. Fit the β-distribution form to the observed ARI vs N. Require `R² > 0.9` and `Acc_max > 0.9`. If you can ever break this curve, the algorithm has regressed in a way that single-point tests will not catch. |
-| MM28 | **Percolation order parameter**, Appendix E.3 line 1771: `T_LCC/T` should show a first-order transition as `N` increases at fixed noise. | Sweep `N ∈ {2, 4, 8, 16, 32, 64}` on the period-2 logistic ensemble. Record `T_LCC/T` of the binarised consensus graph (after sparsification). Assert `T_LCC/T` is monotone non-increasing in `N` and exhibits a drop of at least 0.3 between two consecutive `N` values. Coarse but catches loss of the "glassy" recurrence structure that gives the method its name. |
-| MM29 | **HN-Isomap baseline produces a valid distance matrix**, used implicitly throughout §III.A. | After `common_neighbors_ratio` computation in `HirataNomuraIsomap`, verify: symmetric, zero-diagonal, non-negative — i.e. a valid pseudo-distance for Isomap's MDS step. Catches a class of bugs where the ratio drifts below zero or symmetry is lost. |
-
-### §5b.5 — Sklearn-contract tests
-
-Cheap, mechanical, but worth pinning down.
-
-- **MM30** — `sklearn.utils.estimator_checks.check_estimator` (subset; the unsupervised time-series API has known mismatches, so use `check_no_attributes_set_in_init` + `check_get_params_invariance` rather than the full battery).
-- **MM31** — Constructing a `RecurrenceManifold()` does **not** change `np.random.get_state()` — pins the §3A item 6 fix.
-- **MM32** — `set_params(**get_params())` is the identity on the model state.
-
-### How §5b changes the prioritisation in §6
-
-The math-correctness layer rearranges step 2 of §6. Suggested revision:
-
-1. **Bug-fix PR** (§3A + §5 regression tests). No behavioural change.
-2. **Canonical-algorithm PR**: add **MM5, MM19, MM20, MM22** *before* changing any model code. These three tests *will fail* against today's `models.py` (MM22 because of SVD-vs-Laplacian; MM19/20 because the default uses the kernel recurrence not the simplicial complex; MM5 because the two simplicial impls have not been compared). Use the failing tests to drive a single coherent fix that aligns the code with the paper. Lock in the green state.
-3. **Modularisation PR** (§4) — now safe, because the math-correctness suite catches anything that drifts.
-4. **Invariance / contract PRs** — MM13, MM14, MM18, MM30–32 enforce behaviours that should never have been allowed to drift; add them once and treat any failure as a real regression.
-5. **Performance PR** (§3D) — vectorise `common_neighbors_ratio` and `compress_adjacency` only after MM12 / MM10 pin behaviour.
-
-The "must" tests in §5b.1–§5b.3 (MM1–MM6, MM10, MM13–MM14, MM19–MM22, MM27) are the minimum I would want green before any refactor of `models.py`. They cover: (a) the inner math of the simplicial complex (MM1–MM5), (b) the consensus aggregation (MM6), (c) community-detection robustness (MM10), (d) algorithmic invariances that *cannot* be wrong (MM13–MM14), (e) the Sauer limit on which the paper's claim of exactness rests (MM19–MM20), (f) the Fiedler/Laplacian claim for the continuous model (MM22), and (g) the β-scaling that validates the method beyond a single working point (MM27).
-
----
-
 ## 6. Suggested order of work
+
+> **All five steps completed by 2026-05-23.** Per-step outcomes are
+> in CLAUDE.md "Current state".
 
 1. **Land the bug-fix PR** (no behaviour changes): items A1, A2, A3, A4, A5, A7, A8, A9. Add regression tests for each.
 2. **Decide and document the canonical pipeline** for `RecurrenceManifold` (Laplacian Fiedler vs SVD) and `RecurrenceClustering` (fuzzy simplex vs exp-kernel). Section B above flags both — they're behavioural, not bug fixes, so they deserve a separate PR with a regression check on the benchmark datasets.
 3. **Modularise utils** first (§4) — it's the lowest-risk change; each function is pure. Land with the per-utility test files (§5).
 4. **Modularise models** — extract `_make_embedding` into `embeddings.py`, extract `_leiden` into `graph/communities.py`, then split the four model classes into four files. Old import paths kept alive via shims in `models/__init__.py`.
 5. **Fix performance hotspots** (`common_neighbors_ratio`, `compress_adjacency`, sparse path through `data_to_connectivity*`) — separate PR, with `pytest-benchmark` markers if you want regression guards.
+
+The §5b math-correctness layer rearranged step 2 in practice:
+
+1. **Bug-fix PR** (§3A + §5 regression tests). No behavioural change.
+2. **Canonical-algorithm PR**: add **MM5, MM19, MM20, MM22** *before* changing any model code. These three tests *will fail* against today's `models.py`. Use the failing tests to drive a single coherent fix that aligns the code with the paper. Lock in the green state.
+3. **Modularisation PR** (§4) — now safe, because the math-correctness suite catches anything that drifts.
+4. **Invariance / contract PRs** — MM13, MM14, MM18, MM30–32 enforce behaviours that should never have been allowed to drift; add them once and treat any failure as a real regression.
+5. **Performance PR** (§3D) — vectorise `common_neighbors_ratio` and `compress_adjacency` only after MM12 / MM10 pin behaviour.
+
+The "must" tests in §5b.1–§5b.3 (MM1–MM6, MM10, MM13–MM14, MM19–MM22, MM27) are the minimum I would want green before any refactor of `models.py`. They cover: (a) the inner math of the simplicial complex (MM1–MM5), (b) the consensus aggregation (MM6), (c) community-detection robustness (MM10), (d) algorithmic invariances that *cannot* be wrong (MM13–MM14), (e) the Sauer limit on which the paper's claim of exactness rests (MM19–MM20), (f) the Fiedler/Laplacian claim for the continuous model (MM22), and (g) the β-scaling that validates the method beyond a single working point (MM27).
 
 ---
 

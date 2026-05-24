@@ -15,32 +15,36 @@ def hollow_matrix(arr):
 
 def common_neighbors_ratio(adj_matrix):
     """
-    Given a binary adjacency matrix, compute the common neighbors ratio matrix. Each
-    entry in the matrix is one minus the ratio of the number of common neighbors of two 
-    nodes to the total unique neighbors of the two nodes.
+    Given a binary adjacency matrix, compute the common-neighbours ratio
+    matrix: ``1 − |N(i) ∩ N(j)| / |N(i) ∪ N(j)|`` for every pair (i, j).
+
+    Vectorised replacement for the original O(T² · k) Python double loop
+    (audit §3D). For boolean ``A``:
+
+        overlap = A @ Aᵀ
+        union   = k_i + k_j − overlap   (where k_i = row sum of A)
 
     Args:
         adj_matrix (np.ndarray): A binary adjacency matrix.
 
     Returns:
-        np.ndarray: A common neighbor-weighted adjacency matrix.
+        np.ndarray: a symmetric matrix of (1 − Jaccard) values with a
+        zero diagonal.
     """
-    weighted_matrix = np.zeros_like(adj_matrix)
-    n = adj_matrix.shape[0]
-    all_neighbor_lists = []
-    for i in range(n):
-        neighbor_indices = np.where(adj_matrix[i] > 0)[0]
-        all_neighbor_lists.append(neighbor_indices)
-
-    for i in range(n):
-        for j in range(i + 1, n):
-            overlap = np.intersect1d(all_neighbor_lists[i], all_neighbor_lists[j])
-            union = np.union1d(all_neighbor_lists[i], all_neighbor_lists[j])
-            weighted_matrix[i, j] = 1 - len(overlap) / len(union)
-
-    weighted_matrix = weighted_matrix + weighted_matrix.T
-    np.fill_diagonal(weighted_matrix, 0)
-    return weighted_matrix
+    A = np.asarray(adj_matrix).astype(bool).astype(int)
+    overlap = A @ A.T
+    degrees = A.sum(axis=1)
+    union = degrees[:, None] + degrees[None, :] - overlap
+    # Avoid divide-by-zero where both rows are empty; ratio is undefined,
+    # set to 0 (1 - 0/0 → no information; conservative as "fully similar"
+    # is no better an option here).
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ratio = np.where(union > 0, overlap / union, 0.0)
+    weighted = 1.0 - ratio
+    np.fill_diagonal(weighted, 0)
+    # Match the legacy convention of returning the same dtype as the input
+    # (the old code returned `np.zeros_like(adj_matrix)`).
+    return weighted.astype(adj_matrix.dtype, copy=False)
 
 
 def neighbors_to_mutual(a):
@@ -241,19 +245,6 @@ def adjmat(g):
     Wrapper for networkx adjacency matrix
     """
     return nx.linalg.graphmatrix.adjacency_matrix(g)
-
-
-def multigraph_to_weighted(g):
-    """
-    Convert a MultiGraph to a weighted graph
-    """
-    c = Counter(g.edges())
-    for u, v, d in g.edges(data=True):
-        d['weight'] = c[u, v]
-    adj = nx.linalg.graphmatrix.adjacency_matrix(g).todense()
-    adj = np.sqrt(adj)
-    out_g = nx.Graph(adj)
-    return out_g
 
 
 def merge_labels(labels_list, labels, label_merge="majority"):
