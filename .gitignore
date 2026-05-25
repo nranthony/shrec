@@ -82,6 +82,10 @@ coverage.xml
 # Sphinx documentation
 docs/_build/
 
+# Quarto spike build output
+quarto-spike/_site/
+quarto-spike/.quarto/
+
 # PyBuilder
 target/
 ### IPythonNotebook ###

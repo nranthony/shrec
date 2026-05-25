@@ -1,0 +1,100 @@
+---
+title: "Quickstart — recovering a hidden driver"
+jupyter: python3
+---
+
+A worked example of the SHREC pipeline: drive an ensemble of chaotic
+logistic maps with a hidden continuous signal, then recover that signal
+from the responses alone.
+
+## 1. Build the responses
+
+Each response $x_k(t)$ is a chaotic logistic map with its own bifurcation
+parameter $r_k$, modulated by a shared hidden driver $z(t)$:
+
+$$x_k(t+1) = r_k\, x_k(t)\,(1 - x_k(t)) + c\, z(t).$$
+
+The driver $z(t)$ is what we want to recover; the model only sees the
+matrix of responses.
+
+```{python}
+import numpy as np
+
+T, N = 1000, 20
+rng = np.random.default_rng(0)
+
+# Hidden driver — a slow sinusoid.
+z_true = 0.5 + 0.3 * np.sin(np.linspace(0, 6 * np.pi, T))
+
+# Ensemble of chaotic logistic responses driven by z_true.
+r_values = rng.uniform(3.81, 3.97, size=N)
+X = np.empty((T, N))
+for k, r in enumerate(r_values):
+    x = np.empty(T)
+    x[0] = rng.uniform(0.1, 0.9)
+    for t in range(T - 1):
+        x[t + 1] = np.clip(r * x[t] * (1 - x[t]) + 0.3 * z_true[t], 0.0, 1.0)
+    X[:, k] = x
+
+X.shape
+```
+
+## 2. Recover the driver
+
+`RecurrenceManifold` builds a fuzzy simplicial recurrence graph per
+response, averages them into a consensus affinity matrix, and returns
+the Fiedler eigenvector of its Laplacian — the continuous embedding that
+best respects the consensus recurrences.
+
+```{python}
+from shrec import RecurrenceManifold
+
+model = RecurrenceManifold(random_state=0)
+z_hat = model.fit_predict(X)
+```
+
+## 3. Compare
+
+Align sign and scale (the Fiedler vector is defined up to $\pm$ and an
+arbitrary scale), then overlay against the ground truth.
+
+```{python}
+from scipy.stats import pearsonr
+
+# Resolve sign + scale by linear regression onto the ground truth.
+sign = np.sign(pearsonr(z_true, z_hat).statistic)
+z_hat_aligned = sign * (z_hat - z_hat.mean()) / z_hat.std()
+z_true_norm = (z_true - z_true.mean()) / z_true.std()
+
+corr = pearsonr(z_true_norm, z_hat_aligned).statistic
+print(f"Pearson correlation: {corr:.3f}")
+```
+
+```{python}
+#| fig-cap: "Recovered driver (orange) overlaid on the hidden ground truth (blue)."
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(8, 3))
+ax.plot(z_true_norm, label="true driver", lw=1.5)
+ax.plot(z_hat_aligned, label="SHREC estimate", lw=1.0, alpha=0.8)
+ax.set_xlabel("t")
+ax.set_ylabel("z (standardised)")
+ax.legend(loc="upper right")
+fig.tight_layout()
+```
+
+## What just happened
+
+- **Step 1** built the test bed: 20 chaotic responses, all driven by a
+  single sinusoid the algorithm never sees.
+- **Step 2** ran the canonical pipeline — delay-embed each response,
+  build per-response fuzzy simplicial recurrence graphs
+  (`shrec.recurrence.dataset_to_simplex`), average into a consensus
+  graph, take the Fiedler eigenvector of its Laplacian.
+- **Step 3** confirmed the recovered signal tracks the hidden driver
+  (correlation ≈ 1 in the noise-free regime). This is the
+  continuous-driver counterpart of the MM19 / MM22 oracles in the
+  test suite.
+
+For the discrete-driver variant (Leiden community detection on the same
+consensus graph), swap `RecurrenceManifold` for `RecurrenceClustering`.

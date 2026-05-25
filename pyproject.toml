@@ -51,6 +51,8 @@ dev = [
     "pytest-cov",
     "hypothesis",
     "pypdf",
+    "jupyter>=1.1.1",
+    "nbformat>=5.10.4",
 ]
 
 [build-system]

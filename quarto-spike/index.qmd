@@ -1,0 +1,37 @@
+---
+title: "shrec"
+---
+
+**Shared recurrence** — companion code to Gilpin,
+*Recurrences Reveal Shared Causal Drivers of Complex Time Series*,
+Phys. Rev. X **15**, 011005 (2025).
+
+The SHREC algorithm reconstructs an unobserved driver $z(t)$ from $N$
+measured response time series $x_k(t)$. The canonical pipeline lives at
+[`shrec.RecurrenceManifold`](quickstart.qmd) (continuous driver) and
+`shrec.RecurrenceClustering` (discrete driver).
+
+## Install
+
+```bash
+uv add shrec                # core
+uv add 'shrec[viz]'         # + matplotlib/seaborn for the quickstart
+```
+
+## Where to go next
+
+- [Quickstart](quickstart.qmd) — recover a hidden driver from chaotic
+  logistic responses in ~30 lines.
+
+## Citation
+
+```bibtex
+@article{gilpin2025shrec,
+  title   = {Recurrences Reveal Shared Causal Drivers of Complex Time Series},
+  author  = {Gilpin, William},
+  journal = {Physical Review X},
+  volume  = {15},
+  pages   = {011005},
+  year    = {2025},
+}
+```
