@@ -33,7 +33,7 @@ def data_to_connectivity2(X, k=10, tol=1e-5, time_exclude=0, verbose=False):
     nb, nt, _ = X.shape
 
     if not verbose:
-        warnings.filterwarnings('ignore')  # fsolve often warns harmlessly
+        warnings.filterwarnings('ignore')
 
     wmat = np.zeros((nt, nt))
     for ind, X0 in enumerate(X):

@@ -9,6 +9,97 @@ import pytest
 from scipy.spatial.distance import cdist
 
 from shrec.models.models import dataset_to_simplex, relu
+from shrec.recurrence.simplicial import fit_rho_sigma
+
+
+def _knn_dists(X, k):
+    """The per-row sorted k-NN distances, exactly as `dataset_to_simplex`
+    constructs them (true duplicates dropped via the 1e-10 floor)."""
+    dmat = cdist(X, X)
+    dmat[dmat < 1e-10] = np.inf
+    dists = np.partition(dmat, k + 1, axis=1)
+    return np.sort(dists, axis=1)[:, 1:k + 1]
+
+
+# --- §5b.1 MM1 — defining-equation residual ---------------------------------
+
+class TestDefiningEquation:
+    """MM1 (must) — the σ root-solve must actually satisfy its defining
+    equation `Σ_m exp(-ReLU(d_im − ρ_i)/σ_i) = log₂ k` for *every* row.
+
+    This is the cheapest possible correctness check and the one that catches
+    the `fsolve` silent-stall bug: MINPACK's `hybrd` reports `ier=1`
+    ("converged") on the step-size criterion while leaving σ at the initial
+    guess ρ, so the residual is O(1) instead of < 1e-6 on ~6% of rows. A
+    bracketed `brentq` (the equation is monotone in σ) drives every residual
+    to ~1e-12. See docs/math-learning-notes.md.
+    """
+
+    def test_residual_below_tolerance_on_every_row(self, rng):
+        X = rng.standard_normal((50, 3))
+        k = 10
+        target = np.log2(k)
+        for row in _knn_dists(X, k):
+            rho, sigma = fit_rho_sigma(row, k)
+            residual = abs(np.sum(np.exp(-relu(row - rho) / sigma)) - target)
+            assert residual < 1e-6, (
+                f"σ root-solve left residual {residual:.4g} (σ={sigma:.4g}, "
+                f"ρ={rho:.4g}); the defining equation is not satisfied."
+            )
+
+
+# --- §5b.1 MM2 — scale invariance of (ρ, σ) ---------------------------------
+
+class TestScaleInvariance:
+    """MM2 (must) — scaling every distance by α scales (ρ, σ) by α, leaving
+    each affinity `exp(-ReLU(αd − αρ)/(ασ))` unchanged. The equation is
+    scale-covariant by construction, so this is an exact oracle.
+    """
+
+    def test_rho_sigma_scale_linearly(self, rng):
+        X = rng.standard_normal((40, 3))
+        k = 10
+        alpha = 7.3
+        for row in _knn_dists(X, k):
+            rho, sigma = fit_rho_sigma(row, k)
+            rho_a, sigma_a = fit_rho_sigma(alpha * row, k)
+            np.testing.assert_allclose(rho_a, alpha * rho, rtol=1e-9)
+            np.testing.assert_allclose(sigma_a, alpha * sigma, rtol=1e-6)
+
+    def test_affinity_unchanged_under_scaling(self, rng):
+        X = rng.standard_normal((40, 3))
+        k = 10
+        np.testing.assert_allclose(
+            dataset_to_simplex(X, k=k),
+            dataset_to_simplex(7.3 * X, k=k),
+            atol=1e-9,
+        )
+
+
+# --- §5b.1 MM3 — unit diagonal ----------------------------------------------
+
+class TestUnitDiagonal:
+    """MM3 (must) — `d_ii = 0` ⇒ `exp(-ReLU(-ρ_i)) = exp(0) = 1`, and the
+    fuzzy union `1 + 1 − 1·1 = 1`, so the diagonal is exactly 1.
+    """
+
+    def test_diagonal_is_exactly_one(self, rng):
+        A = dataset_to_simplex(rng.standard_normal((40, 3)), k=10)
+        np.testing.assert_array_equal(np.diag(A), np.ones(A.shape[0]))
+
+
+# --- §5b.1 MM4 — fuzzy-union symmetrisation ---------------------------------
+
+class TestFuzzyUnionSymmetrisation:
+    """MM4 (must) — the probabilistic t-conorm `A + Aᵀ − A∘Aᵀ` must yield a
+    symmetric matrix with all entries in [0, 1].
+    """
+
+    def test_symmetric_and_in_unit_interval(self, rng):
+        A = dataset_to_simplex(rng.standard_normal((40, 3)), k=10)
+        np.testing.assert_allclose(A, A.T, atol=1e-12)
+        assert A.min() >= 0.0
+        assert A.max() <= 1.0
 
 
 # --- §5b.1 MM5 — cross-implementation parity --------------------------------

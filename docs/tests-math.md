@@ -25,10 +25,10 @@ with inputs whose answers can be written down.
 
 | Test | Status | Module / Oracle |
 |------|--------|------------------|
-| **MM1 (must)** | ⏳ | `recurrence/simplicial.py:dataset_to_simplex` — defining equation `\|Σ_m exp[-ReLU(d_im − ρ)/σ] − log₂ k\| < 1e-6`. |
-| **MM2 (must)** | ⏳ | Same — **scale invariance**: `fit_rho_sigma(α · d_row, k) = (α·ρ, α·σ)` so affinity is unchanged. |
-| **MM3 (must)** | ⏳ | Same — **diagonal**: `A^(k)_ii = 1` exactly (before any `hollow_matrix`). |
-| **MM4 (must)** | ⏳ | `fuzzy_simplicial_complex` symmetrisation: `A + Aᵀ − A∘Aᵀ ∈ [0,1]^(N×N)` and symmetric. |
+| **MM1 (must)** | ✅ | `recurrence/simplicial.py:fit_rho_sigma` — defining equation `\|Σ_m exp[-ReLU(d_im − ρ)/σ] − log₂ k\| < 1e-6` on every row. **Caught a real bug**: `fsolve` reported `ier=1` while stalling at the initial guess on ~6% of rows (residual ≈ 2.8). Fixed by a bracketed `brentq` (the equation is monotone in σ). See `tests/test_recurrence_simplicial.py` and `docs/math-learning-notes.md`. |
+| **MM2 (must)** | ✅ | Same — **scale invariance**: `fit_rho_sigma(α · d_row, k) = (α·ρ, α·σ)` so affinity is unchanged. Verified on both `(ρ, σ)` and the full `dataset_to_simplex` output. |
+| **MM3 (must)** | ✅ | Same — **diagonal**: `A_ii = 1` exactly (`d_ii=0 ⇒ exp(0)=1`, fuzzy union `1+1−1=1`). |
+| **MM4 (must)** | ✅ | `dataset_to_simplex` symmetrisation: `A + Aᵀ − A∘Aᵀ ∈ [0,1]^(N×N)` and symmetric. |
 | **MM5 (must)** | ⚠️ xfail | `dataset_to_simplex(X, k=M)` vs `umap.umap_.fuzzy_simplicial_set` agreement to `atol=1e-5`. Known divergence on σ-solver conventions; the refactor chose `dataset_to_simplex`. See `tests/test_recurrence_simplicial.py`. |
 | **MM6 (must)** | ⏳ | `recurrence/kernel.py:data_to_connectivity` p-norm limits: ord=1 → mean; ord→∞ → min-over-channels. |
 | MM7 | ⏳ | `cdist` isometry invariance under random orthogonal `Q` + translation. |
@@ -102,19 +102,20 @@ Cheap mechanical pinning.
 
 | Section | Total | Green | xfail | Deferred |
 |---------|-------|-------|-------|----------|
-| §5b.1 inner math      | 12 | 1 | 1 | 10 |
+| §5b.1 inner math      | 12 | 5 | 1 | 6  |
 | §5b.2 invariances     | 6  | 3 | 0 | 3  |
 | §5b.3 limiting cases  | 8  | 2 | 1 | 5  |
 | §5b.4 scaling laws    | 3  | 0 | 0 | 3  |
 | §5b.5 sklearn contract| 3  | 3 | 0 | 0  |
-| **total**             | 32 | 9 | 2 | 21 |
+| **total**             | 32 | 13 | 2 | 17 |
 
 The "must" tests (MM1–MM6, MM10, MM13–MM14, MM19–MM22, MM27) are the
-minimum to call the algorithm green. Of the 13 must-tests, **6 are
-green, 2 are xfail-documented, and 5 are still deferred** (the inner-
-math closed-form checks MM1–MM4, plus the consensus aggregation MM6,
-the backend-agreement check MM10, and the paper-figure regression
-MM27).
+minimum to call the algorithm green. Of the 13 must-tests, **10 are
+green, 2 are xfail-documented, and 1 is still deferred**. The inner-
+math closed-form checks MM1–MM4 are now green (and MM1 surfaced and
+fixed the `fsolve` σ-solve stall); the remaining gaps are the consensus
+aggregation MM6, the backend-agreement check MM10, and the paper-figure
+regression MM27.
 
 The deferred items are the natural next batch of work whenever the
 math-correctness suite is revisited.
