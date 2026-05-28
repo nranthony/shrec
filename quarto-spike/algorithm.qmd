@@ -1,0 +1,205 @@
+---
+title: "The SHREC Algorithm"
+---
+
+A step-by-step walkthrough of the SHREC pipeline, following Appendix B
+of Gilpin, *Phys. Rev. X* **15**, 011005 (2025).
+
+## The problem
+
+An unknown driver $z(t)$ governs $N$ observed responses
+$x_1(t), \dots, x_N(t)$ via a skew-product dynamical system:
+
+$$\dot{y}_k(t) = g_k\bigl[z(t),\, y_k(t),\, t\bigr], \qquad x_k(t) = M_k \cdot y_k(t).$$
+
+We only see the scalar measurements $x_k$. SHREC recovers $z(t)$
+— either as a discrete sequence of states or as a continuous signal —
+from the matrix of responses alone.
+
+The theoretical foundation is **Sauer's recurrence theorem** (PRL 2004):
+a recurrence in the reconstructed response
+$\hat{y}_k(t) \approx \hat{y}_k(t')$ *implies* a recurrence in the
+driver $z(t) \approx z(t')$. The converse does not hold. SHREC
+exploits this one-directional implication by building consensus across
+all $N$ responses.
+
+---
+
+## Stage 1 — Time-delay embedding {#stage1}
+
+Each scalar response is lifted to a delay vector (Takens' theorem):
+
+$$\hat{y}_k(t) = \bigl[x_k(t),\; x_k(t-\tau),\; \dots,\; x_k(t-(D-1)\tau)\bigr]^\top \in \mathbb{R}^D$$
+
+where $D$ is the embedding dimension and $\tau$ is the time delay.
+Takens' theorem (extended to skew-product systems by Stark) guarantees
+that this lift produces a faithful image of the response attractor,
+so that distances in the embedded space faithfully reflect dynamical
+proximity.
+
+**Code:** `shrec.embeddings.embed_ts` / `make_embedding`
+
+**Interactive notebook:** [Stage 1: Embedding](stage-embedding.qmd)
+
+---
+
+## Stage 2 — Fuzzy simplicial complex {#stage2}
+
+Classical recurrence plots use a fixed threshold $\varepsilon$ to
+binarise the distance matrix. SHREC replaces this with an **adaptive,
+per-point** construction borrowed from UMAP (McInnes et al., JOSS 2018).
+
+### 2a. Pairwise distances
+
+For each response $k$, compute:
+
+$$d^{(k)}_{ij} = \bigl\|\hat{y}_k(i) - \hat{y}_k(j)\bigr\|.$$
+
+### 2b. Local scale parameters $\rho_i$, $\sigma_i$
+
+For each point $i$, take its $M$ nearest neighbours and set:
+
+$$\rho_i = \min_m\, d^{(k)}_{im}$$
+
+Then solve for $\sigma_i$ such that:
+
+$$\log_2 M = \sum_{m=1}^{M} \exp\!\Bigl[-\frac{\operatorname{ReLU}(d^{(k)}_{im} - \rho_i)}{\sigma_i}\Bigr]$$
+
+**Intuition.** This constrains each point to have exactly $\log_2 M$
+"effective" neighbours in a soft sense — analogous to the perplexity
+constraint in t-SNE. The $\operatorname{ReLU}(d - \rho)$ term subtracts
+off the nearest-neighbour distance, so affinity is measured relative to
+the local scale. In dense regions $\sigma_i$ is small (sharp falloff);
+in sparse regions it is large (gentle falloff). This **adapts the
+recurrence threshold to local attractor density**.
+
+### 2c. Per-response affinity
+
+$$A^{(k)}_{ij} = \exp\!\Bigl[-\frac{\operatorname{ReLU}(d^{(k)}_{ij} - \rho_i)}{\sigma_i}\Bigr]$$
+
+This matrix is asymmetric (because $\rho_i, \sigma_i$ are row-specific).
+Symmetrise via the **fuzzy union**:
+
+$$A^{(k)} \;\leftarrow\; A^{(k)} + {A^{(k)}}^\top - A^{(k)} \circ {A^{(k)}}^\top$$
+
+**Code:** `shrec.recurrence.simplicial.dataset_to_simplex`
+
+**Interactive notebook:** [Stage 2: Simplicial Complex](stage-simplicial.qmd)
+
+---
+
+## Stage 3 — Consensus aggregation {#stage3}
+
+Average the per-response affinity matrices into a single consensus graph:
+
+$$A_{ij} = \frac{1}{K}\sum_{k=1}^{K} A^{(k)}_{ij}$$
+
+**Why averaging?** The classical Sauer approach uses
+$d^*_{ij} = \inf_k d^{(k)}_{ij}$ — consensus by minimum distance (Boolean
+intersection of recurrence sets). This is fragile: a single spurious
+recurrence can merge equivalence classes. The mean over fuzzy affinities
+dilutes noise from any one response with the information from the other
+$K-1$ responses.
+
+The code generalises this to a $p$-norm via `aggregation_order`, but the
+paper's canonical choice is the arithmetic mean.
+
+**Code:** `shrec.recurrence.consensus.data_to_connectivity2`
+
+**Interactive notebook:** [Stage 3: Consensus](stage-consensus.qmd)
+
+---
+
+## Stage 4 — Driver reconstruction {#stage4}
+
+### 4a. Discrete driver — Leiden community detection
+
+The consensus graph $A$ defines a weighted network over time points.
+Time points sharing the same discrete driver state form densely connected
+communities. **Leiden** (a modularity-optimisation heuristic) partitions
+$A$ into communities whose labels form the reconstructed discrete driver.
+
+**Physical interpretation.** $A$ defines a Markov chain. If $A$
+decomposes into disjoint subgraphs, random walkers are kinetically trapped
+— these are exact equivalence classes (the Sauer limit). With noise, the
+structure appears as *almost-invariant sets*: metastable basins where
+walkers dwell before escaping. Community detection finds these basins.
+
+**Code:** `shrec.graph.communities._leiden` $\to$ `RecurrenceClustering`
+
+### 4b. Continuous driver — Fiedler eigenvector
+
+Compute the **graph Laplacian**:
+
+$$L = D - A, \qquad D_{ii} = \sum_j A_{ij}$$
+
+The Fiedler vector is the eigenvector of $L$ corresponding to the
+**smallest non-zero eigenvalue**:
+
+$$L\,v = \lambda\,v, \qquad \lambda_0 = 0 < \lambda_1 \le \lambda_2 \le \cdots$$
+
+The Fiedler vector $v_1$ is the reconstructed continuous driver. It
+captures the *slowest mode of variation* on the consensus graph — the
+dominant driver dynamics.
+
+This is mathematically identical to **Laplacian eigenmaps** / **diffusion
+maps** (Coifman & Lafon). The paper draws a direct analogy to
+**pseudotime** in single-cell biology.
+
+**No gradient descent.** The paper explicitly notes that SHREC requires
+"only matrix decomposition and not hyperparameter tuning or iterative
+gradient descent" — the spectral decomposition is a closed-form linear
+algebra operation.
+
+**Code:** `RecurrenceManifold` — `scipy.linalg.eigh` on $L = D - A$
+
+**Interactive notebook:** [Stage 4: Reconstruction](stage-reconstruction.qmd)
+
+---
+
+## What SHREC borrows from UMAP — and what it doesn't
+
+| UMAP component | Used in SHREC? | Notes |
+|---|---|---|
+| Fuzzy simplicial complex ($\rho$, $\sigma$ construction) | **Yes** | Core recurrence construction |
+| Cross-entropy loss + SGD layout | **No** | SHREC never does low-dimensional layout via optimisation |
+| Symmetrisation via fuzzy union | **Yes** | $A + A^\top - A \circ A^\top$ |
+| $k$-nearest-neighbour graph | **Yes** | Hyperparameter $M$ = UMAP's `n_neighbors` |
+
+The key insight: UMAP's topological construction provides an adaptive,
+robust way to detect recurrences. But the downstream analysis — consensus
+averaging + spectral decomposition / community detection — is entirely
+different from UMAP's SGD-based layout.
+
+---
+
+## Data flow summary
+
+```
+Raw responses X (T × N)
+        │
+        ▼
+  ┌─────────────────────────────────┐
+  │  Stage 1: Time-delay embedding  │  embeddings.py
+  │  x_k(t) → ŷ_k(t) ∈ ℝ^D       │
+  └─────────────┬───────────────────┘
+                │
+                ▼
+  ┌─────────────────────────────────┐
+  │  Stage 2: Fuzzy simplicial      │  recurrence/simplicial.py
+  │  Per-response A^(k) via ρ/σ     │
+  └─────────────┬───────────────────┘
+                │
+                ▼
+  ┌─────────────────────────────────┐
+  │  Stage 3: Consensus             │  recurrence/consensus.py
+  │  A = mean_k A^(k)              │
+  └─────────┬───────────┬──────────┘
+            │           │
+            ▼           ▼
+  ┌─────────────┐ ┌──────────────┐
+  │  Leiden     │ │  Fiedler     │
+  │  clusters   │ │  eigenvector │
+  │  (discrete) │ │  (continuous)│
+  └─────────────┘ └──────────────┘
+```

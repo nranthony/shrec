@@ -1,0 +1,124 @@
+---
+title: "Stage 1: Time-Delay Embedding"
+jupyter: python3
+---
+
+Time-delay embedding (Takens' theorem) lifts a scalar time series into a
+higher-dimensional space where the attractor structure is faithfully
+reconstructed. This is the first step of the SHREC pipeline.
+
+## The idea
+
+Given a scalar measurement $x(t)$, build delay vectors:
+
+$$\hat{y}(t) = \bigl[x(t),\; x(t-\tau),\; \dots,\; x(t-(D-1)\tau)\bigr]^\top \in \mathbb{R}^D$$
+
+Takens' theorem guarantees that the resulting point cloud is
+diffeomorphic to the true attractor (for generic observation functions and
+sufficiently large $D$). This means distances in the embedded space
+reflect genuine dynamical proximity.
+
+## Generate test data
+
+We use a chaotic logistic map driven by a slow sinusoid — the same
+system as the [Quickstart](quickstart.qmd).
+
+```{python}
+import numpy as np
+
+T, N = 500, 10
+rng = np.random.default_rng(42)
+
+z_true = 0.5 + 0.3 * np.sin(np.linspace(0, 4 * np.pi, T))
+
+r_values = rng.uniform(3.82, 3.95, size=N)
+X = np.empty((T, N))
+for k, r in enumerate(r_values):
+    x = np.empty(T)
+    x[0] = rng.uniform(0.1, 0.9)
+    for t in range(T - 1):
+        x[t + 1] = np.clip(r * x[t] * (1 - x[t]) + 0.3 * z_true[t], 0, 1)
+    X[:, k] = x
+
+print(f"Responses shape: {X.shape}  (T={T}, N={N})")
+```
+
+## Visualise raw responses
+
+```{python}
+#| fig-cap: "Five raw chaotic responses. The shared sinusoidal driver is hidden."
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(8, 3))
+for k in range(5):
+    ax.plot(X[:, k], lw=0.7, alpha=0.7, label=f"x_{k}")
+ax.set_xlabel("t")
+ax.set_ylabel("x_k(t)")
+ax.legend(loc="upper right", fontsize=8)
+fig.tight_layout()
+```
+
+## Apply time-delay embedding
+
+```{python}
+from shrec.embeddings import make_embedding
+
+D = 3      # embedding dimension
+tau = 1    # time delay (implicit in embed_ts with padding)
+
+X_embed = make_embedding(X, d_embed=D, padding="symmetric")
+print(f"Embedded shape: {X_embed.shape}  (N_responses, T, D)")
+```
+
+## Visualise the attractor
+
+For a single response, the delay-embedded trajectory traces out an
+attractor in $\mathbb{R}^D$. Points that are close on this attractor
+correspond to recurrent dynamical states.
+
+```{python}
+#| fig-cap: "Delay-embedded attractor for response 0, coloured by the hidden driver z(t)."
+from mpl_toolkits.mplot3d import Axes3D
+
+y = X_embed[0]  # (T, D)
+fig = plt.figure(figsize=(7, 5))
+ax = fig.add_subplot(111, projection="3d")
+sc = ax.scatter(y[:, 0], y[:, 1], y[:, 2], c=z_true, cmap="coolwarm", s=5, alpha=0.8)
+ax.set_xlabel("x(t)")
+ax.set_ylabel("x(t−τ)")
+ax.set_zlabel("x(t−2τ)")
+fig.colorbar(sc, label="z(t) (hidden driver)", shrink=0.6)
+fig.tight_layout()
+```
+
+Notice how nearby points on the attractor share similar driver values
+(colours). This is the Sauer recurrence property in action: recurrence
+in the response implies recurrence in the driver.
+
+## Effect of embedding dimension $D$
+
+Higher $D$ unfolds the attractor further, preventing false neighbours
+from overlapping. But too high wastes data (the embedded length shrinks
+by $(D-1)\tau$).
+
+```{python}
+#| fig-cap: "Pairwise distance distributions for D=2, 3, 5. Higher D separates distinct attractor regions."
+from scipy.spatial.distance import pdist
+
+fig, axes = plt.subplots(1, 3, figsize=(10, 3), sharey=True)
+for ax, d in zip(axes, [2, 3, 5]):
+    y_d = make_embedding(X[:, :1], d_embed=d, padding="symmetric")[0]
+    dists = pdist(y_d)
+    ax.hist(dists, bins=50, density=True, alpha=0.7)
+    ax.set_title(f"D = {d}")
+    ax.set_xlabel("pairwise distance")
+axes[0].set_ylabel("density")
+fig.tight_layout()
+```
+
+## Key takeaway
+
+Time-delay embedding converts each scalar response into a point cloud
+on the response attractor. The next stage
+([fuzzy simplicial complex](stage-simplicial.qmd)) converts pairwise
+distances in this space into an adaptive, weighted recurrence graph.

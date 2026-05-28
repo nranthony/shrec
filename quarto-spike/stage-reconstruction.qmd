@@ -1,0 +1,221 @@
+---
+title: "Stage 4: Driver Reconstruction"
+jupyter: python3
+---
+
+The final stage extracts the driver from the consensus recurrence graph.
+SHREC offers two modes: **discrete** (community detection via Leiden)
+and **continuous** (spectral embedding via the Fiedler eigenvector).
+
+## Setup — build the consensus graph
+
+```{python}
+import numpy as np
+from shrec.embeddings import make_embedding
+from shrec.recurrence.consensus import data_to_connectivity2
+
+T, N = 500, 20
+rng = np.random.default_rng(42)
+
+z_true = 0.5 + 0.3 * np.sin(np.linspace(0, 4 * np.pi, T))
+
+r_values = rng.uniform(3.82, 3.95, size=N)
+X = np.empty((T, N))
+for k, r in enumerate(r_values):
+    x = np.empty(T)
+    x[0] = rng.uniform(0.1, 0.9)
+    for t in range(T - 1):
+        x[t + 1] = np.clip(r * x[t] * (1 - x[t]) + 0.3 * z_true[t], 0, 1)
+    X[:, k] = x
+
+X_embed = make_embedding(X, d_embed=3, padding="symmetric")
+A = data_to_connectivity2(X_embed, k=15)
+print(f"Consensus matrix: {A.shape}")
+```
+
+---
+
+## Continuous driver — the Fiedler eigenvector
+
+### The graph Laplacian
+
+The unnormalised graph Laplacian is:
+
+$$L = D - A, \qquad D_{ii} = \sum_j A_{ij}$$
+
+$L$ encodes diffusion on the graph. Its smallest eigenvalue is always
+$\lambda_0 = 0$ (constant eigenvector). The **Fiedler eigenvector** is
+the eigenvector for $\lambda_1$ — the slowest non-trivial mode.
+
+```{python}
+from scipy.linalg import eigh
+
+D_deg = np.diag(A.sum(axis=1))
+L = D_deg - A
+
+eigenvalues, eigenvectors = eigh(L, subset_by_index=[0, 5])
+print("First 6 eigenvalues:", np.round(eigenvalues, 4))
+```
+
+### The eigenspectrum
+
+```{python}
+#| fig-cap: "The spectral gap between λ_0 and λ_1 indicates how well-separated the dominant driver mode is from the rest."
+import matplotlib.pyplot as plt
+
+all_evals = eigh(L, eigvals_only=True)
+
+fig, axes = plt.subplots(1, 2, figsize=(10, 3))
+axes[0].plot(all_evals[:20], "o-", ms=4)
+axes[0].set_xlabel("index")
+axes[0].set_ylabel("$\\lambda$")
+axes[0].set_title("First 20 eigenvalues")
+
+axes[1].bar(range(6), eigenvalues, color=["C3"] + ["C0"] * 5)
+axes[1].set_xlabel("index")
+axes[1].set_ylabel("$\\lambda$")
+axes[1].set_title("Leading eigenvalues (λ₀ = 0 in red)")
+fig.tight_layout()
+```
+
+### Extract and align the Fiedler vector
+
+The Fiedler vector is defined up to sign and scale (it's an eigenvector).
+We align it to the ground truth via sign correction and standardisation.
+
+```{python}
+from scipy.stats import pearsonr
+
+fiedler = eigenvectors[:, 1]  # skip the constant eigenvector at index 0
+
+sign = np.sign(pearsonr(z_true, fiedler).statistic)
+z_hat = sign * (fiedler - fiedler.mean()) / fiedler.std()
+z_ref = (z_true - z_true.mean()) / z_true.std()
+
+corr = pearsonr(z_ref, z_hat).statistic
+print(f"Pearson correlation with true driver: {corr:.4f}")
+```
+
+```{python}
+#| fig-cap: "Recovered continuous driver (Fiedler vector, orange) vs. hidden ground truth (blue). High correlation confirms faithful reconstruction."
+fig, ax = plt.subplots(figsize=(8, 3))
+ax.plot(z_ref, label="true driver z(t)", lw=1.5)
+ax.plot(z_hat, label="Fiedler estimate", lw=1.0, alpha=0.8)
+ax.set_xlabel("t")
+ax.set_ylabel("z (standardised)")
+ax.legend(loc="upper right")
+fig.tight_layout()
+```
+
+### Higher eigenvectors
+
+The second, third, etc. non-trivial eigenvectors capture successively
+faster modes of variation. For a multi-dimensional driver, these carry
+additional driver components.
+
+```{python}
+#| fig-cap: "First three non-trivial eigenvectors of the consensus Laplacian. The Fiedler vector (top) captures the dominant sinusoidal driver; higher modes reflect harmonics."
+fig, axes = plt.subplots(3, 1, figsize=(8, 5), sharex=True)
+for i, ax in enumerate(axes):
+    ev = eigenvectors[:, i + 1]
+    ax.plot(ev, lw=0.8)
+    ax.set_ylabel(f"$v_{{{i+1}}}$")
+    ax.set_title(f"Eigenvector {i+1} (λ = {eigenvalues[i+1]:.4f})", fontsize=10)
+axes[-1].set_xlabel("t")
+fig.tight_layout()
+```
+
+---
+
+## Discrete driver — Leiden community detection
+
+For a driver that switches between discrete states, community detection
+on the consensus graph partitions time points into clusters.
+
+### Generate a discrete-driver system
+
+```{python}
+z_discrete = np.zeros(T, dtype=int)
+period = T // 4
+for i in range(4):
+    z_discrete[i * period:(i + 1) * period] = i
+
+coupling = 0.4
+X_disc = np.empty((T, N))
+for k, r in enumerate(r_values):
+    x = np.empty(T)
+    x[0] = rng.uniform(0.1, 0.9)
+    for t in range(T - 1):
+        x[t + 1] = np.clip(r * x[t] * (1 - x[t]) + coupling * (z_discrete[t] / 3.0), 0, 1)
+    X_disc[:, k] = x
+
+X_disc_embed = make_embedding(X_disc, d_embed=3, padding="symmetric")
+A_disc = data_to_connectivity2(X_disc_embed, k=15)
+```
+
+### Run Leiden clustering
+
+```{python}
+from shrec import RecurrenceClustering
+
+model = RecurrenceClustering(random_state=42)
+model.fit(X_disc)
+labels = model.labels_
+
+n_clusters = len(set(labels) - {-1})
+print(f"Detected {n_clusters} communities")
+```
+
+```{python}
+#| fig-cap: "Top: true discrete driver (4 states). Bottom: Leiden cluster assignments from the consensus recurrence graph."
+fig, axes = plt.subplots(2, 1, figsize=(8, 4), sharex=True)
+axes[0].plot(z_discrete, drawstyle="steps-post", lw=1.5)
+axes[0].set_ylabel("true state")
+axes[0].set_title("Ground truth")
+
+axes[1].plot(labels, ".", ms=2)
+axes[1].set_ylabel("cluster")
+axes[1].set_xlabel("t")
+axes[1].set_title("Leiden clusters")
+fig.tight_layout()
+```
+
+---
+
+## Using the high-level API
+
+In practice you don't build the pipeline by hand — `RecurrenceManifold`
+and `RecurrenceClustering` wrap everything:
+
+```{python}
+from shrec import RecurrenceManifold
+
+model = RecurrenceManifold(random_state=42)
+z_hat_api = model.fit_predict(X)
+
+corr_api = pearsonr(z_true, z_hat_api).statistic
+print(f"RecurrenceManifold correlation: {abs(corr_api):.4f}")
+```
+
+## Physical interpretation
+
+The consensus graph $A$ defines a **Markov chain** over time points.
+
+- **Discrete driver**: driver states are *almost-invariant sets* —
+  metastable basins where random walkers dwell before escaping. Leiden
+  finds these basins.
+- **Continuous driver**: the Fiedler vector captures the *slowest
+  relaxation mode* of the random walk. This is equivalent to
+  **diffusion maps** (Coifman & Lafon) and **pseudotime** in single-cell
+  biology.
+- **Percolation transition**: as more responses or cleaner data become
+  available, the consensus graph fragments into disconnected components
+  corresponding to distinct driver states — the algorithm "clicks" into
+  accurate reconstruction.
+
+## Key takeaway
+
+The Fiedler eigenvector is a closed-form spectral computation — no
+gradient descent, no iterative optimisation. Combined with the adaptive
+simplicial complex and consensus aggregation, SHREC reconstructs hidden
+drivers with minimal hyperparameter tuning.

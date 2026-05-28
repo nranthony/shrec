@@ -1,0 +1,157 @@
+---
+title: "Stage 3: Consensus Aggregation"
+jupyter: python3
+---
+
+Each response yields its own fuzzy simplicial recurrence graph. The
+consensus step combines these per-response views into a single graph
+that encodes the **shared** driver signal — suppressing response-specific
+dynamics and noise.
+
+## Why consensus?
+
+A single response's recurrence graph captures the response attractor, not
+the driver directly. Sauer's theorem says recurrence in the response
+*implies* recurrence in the driver, but the converse fails. Each response
+therefore provides a **noisy, partial** view of driver recurrences.
+
+The classical approach (Sauer 2004) intersects binary recurrence sets:
+$d^*_{ij} = \inf_k d^{(k)}_{ij}$. This is fragile — a single spurious
+recurrence in any response can merge distinct driver states.
+
+SHREC replaces intersection with **averaging** of fuzzy affinities:
+
+$$A_{ij} = \frac{1}{K}\sum_{k=1}^{K} A^{(k)}_{ij}$$
+
+Spurious recurrences in one response are diluted by the $K-1$ others.
+
+## Setup — build the full ensemble
+
+```{python}
+import numpy as np
+from shrec.embeddings import make_embedding
+from shrec.recurrence.simplicial import dataset_to_simplex
+
+T, N = 400, 15
+rng = np.random.default_rng(42)
+
+z_true = 0.5 + 0.3 * np.sin(np.linspace(0, 4 * np.pi, T))
+
+r_values = rng.uniform(3.82, 3.95, size=N)
+X = np.empty((T, N))
+for k, r in enumerate(r_values):
+    x = np.empty(T)
+    x[0] = rng.uniform(0.1, 0.9)
+    for t in range(T - 1):
+        x[t + 1] = np.clip(r * x[t] * (1 - x[t]) + 0.3 * z_true[t], 0, 1)
+    X[:, k] = x
+
+X_embed = make_embedding(X, d_embed=3, padding="symmetric")
+print(f"Embedded shape: {X_embed.shape}  (N, T, D)")
+```
+
+## Per-response affinity matrices
+
+Each response produces its own recurrence pattern. Some share
+structure (the driver), others have response-specific noise.
+
+```{python}
+#| fig-cap: "Per-response affinity matrices for responses 0, 4, 9. Each reflects the same underlying driver but with different response-specific structure."
+import matplotlib.pyplot as plt
+
+fig, axes = plt.subplots(1, 3, figsize=(12, 3.5))
+for ax, k in zip(axes, [0, 4, 9]):
+    A_k = dataset_to_simplex(X_embed[k], k=15)
+    ax.imshow(A_k, cmap="inferno", aspect="auto", interpolation="nearest")
+    ax.set_title(f"Response {k}")
+    ax.set_xlabel("time j")
+axes[0].set_ylabel("time i")
+fig.tight_layout()
+```
+
+## Compute the consensus
+
+```{python}
+from shrec.recurrence.consensus import data_to_connectivity2
+
+A_consensus = data_to_connectivity2(X_embed, k=15)
+print(f"Consensus shape: {A_consensus.shape}")
+print(f"Value range: [{A_consensus.min():.4f}, {A_consensus.max():.4f}]")
+```
+
+```{python}
+#| fig-cap: "Consensus affinity matrix. Averaging across 15 responses sharpens the shared recurrence structure and suppresses response-specific noise."
+fig, ax = plt.subplots(figsize=(6, 5))
+im = ax.imshow(A_consensus, cmap="inferno", aspect="auto", interpolation="nearest")
+ax.set_xlabel("time j")
+ax.set_ylabel("time i")
+fig.colorbar(im, ax=ax, label="consensus affinity", shrink=0.8)
+fig.tight_layout()
+```
+
+## Effect of number of responses $N$
+
+More responses = sharper consensus. With few responses, the consensus
+is noisy; with many, the driver structure dominates.
+
+```{python}
+#| fig-cap: "Consensus matrices for N = 2, 5, 15 responses. More responses progressively sharpen the block-diagonal structure corresponding to the periodic driver."
+fig, axes = plt.subplots(1, 3, figsize=(12, 3.5))
+for ax, n_use in zip(axes, [2, 5, 15]):
+    A_n = data_to_connectivity2(X_embed[:n_use], k=15)
+    ax.imshow(A_n, cmap="inferno", aspect="auto", interpolation="nearest")
+    ax.set_title(f"N = {n_use}")
+    ax.set_xlabel("time j")
+axes[0].set_ylabel("time i")
+fig.tight_layout()
+```
+
+## Consensus vs. single response
+
+```{python}
+#| fig-cap: "Single response (left) vs. 15-response consensus (right). The consensus reveals clear periodicity that is buried in noise in any single response."
+A_single = dataset_to_simplex(X_embed[0], k=15)
+
+fig, axes = plt.subplots(1, 2, figsize=(10, 4.5))
+axes[0].imshow(A_single, cmap="inferno", aspect="auto", interpolation="nearest")
+axes[0].set_title("Single response (k=0)")
+axes[0].set_xlabel("time j")
+axes[0].set_ylabel("time i")
+
+axes[1].imshow(A_consensus, cmap="inferno", aspect="auto", interpolation="nearest")
+axes[1].set_title("Consensus (N=15)")
+axes[1].set_xlabel("time j")
+fig.tight_layout()
+```
+
+## The percolation transition
+
+The paper (Section III.E) identifies a **percolation transition** in the
+consensus graph: as data quality increases (more responses, lower noise),
+the graph fragments from one connected component into separate basins
+corresponding to distinct driver states. This transition precedes
+accurate reconstruction.
+
+```{python}
+#| fig-cap: "Sorted eigenvalues of the consensus Laplacian. A clear spectral gap after λ_1 indicates the graph has two well-separated communities — matching the two half-periods of the sinusoidal driver."
+from scipy.linalg import eigh
+
+D_deg = np.diag(A_consensus.sum(axis=1))
+L = D_deg - A_consensus
+
+eigenvalues = eigh(L, eigvals_only=True)
+
+fig, ax = plt.subplots(figsize=(8, 3))
+ax.plot(eigenvalues[:20], "o-", ms=4)
+ax.set_xlabel("eigenvalue index")
+ax.set_ylabel("$\\lambda$")
+ax.set_title("Laplacian spectrum (first 20 eigenvalues)")
+fig.tight_layout()
+```
+
+## Key takeaway
+
+The consensus graph is the shared recurrence structure. The next stage
+([reconstruction](stage-reconstruction.qmd)) extracts the driver from
+this graph — either as discrete communities (Leiden) or as a continuous
+signal (Fiedler eigenvector).

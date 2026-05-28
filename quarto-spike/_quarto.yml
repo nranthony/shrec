@@ -11,6 +11,20 @@ website:
         text: Home
       - href: quickstart.qmd
         text: Quickstart
+      - text: Algorithm
+        menu:
+          - href: algorithm.qmd
+            text: Overview
+          - href: stage-embedding.qmd
+            text: "Stage 1: Embedding"
+          - href: stage-simplicial.qmd
+            text: "Stage 2: Simplicial Complex"
+          - href: stage-consensus.qmd
+            text: "Stage 3: Consensus"
+          - href: stage-reconstruction.qmd
+            text: "Stage 4: Reconstruction"
+      - href: modules.qmd
+        text: Modules
 
 format:
   html:

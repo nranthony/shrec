@@ -1,0 +1,131 @@
+---
+title: "Code Modules"
+---
+
+A reference mapping from each algorithm stage to the implementing
+module, key functions, and entry points.
+
+## Pipeline → module mapping
+
+| Algorithm stage | Module | Key function(s) |
+|---|---|---|
+| **1. Time-delay embedding** | `shrec.embeddings` | `embed_ts(X, m)`, `hankel_matrix(data, q)`, `make_embedding(X, d_embed)` |
+| **2. Fuzzy simplicial complex** | `shrec.recurrence.simplicial` | `dataset_to_simplex(X, k=20, tol=1e-6)` |
+| **3. Consensus aggregation** | `shrec.recurrence.consensus` | `data_to_connectivity2(X, k=10, tol=1e-5)` |
+| **4a. Discrete driver** | `shrec.graph.communities` | `_leiden(g, method, objective, resolution)` |
+| **4b. Continuous driver** | `shrec.models.recurrence_manifold` | `RecurrenceManifold.fit(X)` → Fiedler eigenvector |
+| **Preprocessing** | `shrec.models.base` | `RecurrenceModel._preprocess(X)`, `_make_embedding(X)` |
+
+## Baselines
+
+| Method | Module | Key function(s) |
+|---|---|---|
+| **Sauer (2004)** — union-find on binary recurrences | `shrec.models.classical` | `ClassicalRecurrenceClustering.fit(X)` |
+| Exp-kernel recurrence (used by Sauer) | `shrec.recurrence.kernel` | `data_to_connectivity(X, scale, ord)` |
+| **Hirata–Nomura** — common-neighbour ratio + Isomap | `shrec.models.hirata_nomura` | `HirataNomuraIsomap.fit(X)` |
+| Common-neighbour Jaccard similarity | `shrec.utils.graph_tools` | `common_neighbors_ratio(adj)` |
+
+## High-level API
+
+All models follow the sklearn contract: `fit(X, y=None) → self`.
+
+```python
+from shrec import (
+    RecurrenceClustering,      # discrete driver (Leiden)
+    RecurrenceManifold,        # continuous driver (Fiedler)
+    ClassicalRecurrenceClustering,  # Sauer baseline
+    HirataNomuraIsomap,        # Hirata–Nomura baseline
+)
+
+from shrec import embed_ts, hankel_matrix, make_embedding
+```
+
+## Data flow
+
+```
+Raw responses X (T × N)
+    │
+    ├─ _preprocess(X)           [base.py]
+    │   ├── detrend_ts()        [utils/preprocessing.py]
+    │   ├── PowerTransformer()  [sklearn]
+    │   ├── StandardScaler()    [sklearn]
+    │   └── nan_fill()          [utils/preprocessing.py]
+    │
+    ├─ _make_embedding(X)       [base.py → embeddings.py]
+    │   └── make_embedding(X, d_embed, noise, rng)
+    │
+    ├─ data_to_connectivity2()  [recurrence/consensus.py]
+    │   └── for each response k:
+    │       └── dataset_to_simplex(Y_k, k)  [recurrence/simplicial.py]
+    │           ├── cdist(Y_k, Y_k)
+    │           ├── root-solve σ_i for each row
+    │           └── symmetrise via fuzzy union
+    │
+    └─ Driver extraction:
+        ├── RecurrenceClustering → _leiden(A)   [graph/communities.py]
+        └── RecurrenceManifold  → eigh(L=D−A)  [scipy.linalg]
+```
+
+## Key hyperparameters
+
+### Shared (all models inherit from `RecurrenceModel`)
+
+| Parameter | Default | Purpose |
+|---|---|---|
+| `d_embed` | `3` | Embedding dimension $D$ |
+| `noise` | `0.0` | i.i.d. Gaussian regularisation |
+| `time_exclude` | `0` | Suppress recurrences within $\pm t$ of diagonal |
+| `standardize` | `True` | Z-score normalisation before embedding |
+| `random_state` | `None` | RNG seed (always local `default_rng`, never global) |
+
+### RecurrenceClustering (discrete)
+
+| Parameter | Default | Purpose |
+|---|---|---|
+| `resolution` | `1.0` | Leiden modularity resolution |
+| `objective` | `"modularity"` | Quality function (`"modularity"` or `"cpm"`) |
+| `method` | `"graspologic"` | Backend (`"graspologic"`, `"igraph"`, `"leidenalg"`, `"cdlib"`) |
+
+### RecurrenceManifold (continuous)
+
+| Parameter | Default | Purpose |
+|---|---|---|
+| `n_components` | `1` | Number of Laplacian eigenvectors to extract |
+
+### ClassicalRecurrenceClustering (Sauer baseline)
+
+| Parameter | Default | Purpose |
+|---|---|---|
+| `tolerance` | `0.01` | Sparsification target |
+| `scale` | `1.0` | Distance threshold scaling |
+| `aggregation_order` | `1.0` | Power-mean exponent ($p$-norm over responses) |
+
+## Sub-package layout
+
+```
+src/shrec/
+├── __init__.py              # version + public API re-exports
+├── embeddings.py            # Stage 1: embed_ts, hankel_matrix, make_embedding
+├── recurrence/
+│   ├── simplicial.py        # Stage 2: dataset_to_simplex (canonical)
+│   ├── kernel.py            # Baseline: data_to_connectivity (Sauer)
+│   └── consensus.py         # Stage 3: data_to_connectivity2
+├── graph/
+│   ├── communities.py       # Stage 4a: _leiden multi-backend adapter
+│   └── unionfind.py         # Baseline: DisjointSet, solve_union_find
+├── models/
+│   ├── base.py              # RecurrenceModel (sklearn-clean base)
+│   ├── recurrence_clustering.py   # RecurrenceClustering
+│   ├── recurrence_manifold.py     # RecurrenceManifold
+│   ├── classical.py               # ClassicalRecurrenceClustering
+│   ├── hirata_nomura.py           # HirataNomuraIsomap
+│   └── models.py                  # back-compat re-export shim
+└── utils/
+    ├── preprocessing.py     # detrend, standardise, NaN handling
+    ├── graph_tools.py       # common_neighbors_ratio, adjacency utils
+    ├── signal.py            # discretise, PSD, group_consecutives
+    ├── surrogates.py        # surrogate time series generation
+    ├── metrics.py           # sparsify, otsu_threshold, evaluation
+    ├── transforms.py        # RigidTransform
+    └── io.py                # I/O utilities
+```

@@ -94,3 +94,5 @@ target/
 
 # Remove temporary text files
 *~
+
+quarto-spike/quarto-1.9.38-linux-amd64.deb
