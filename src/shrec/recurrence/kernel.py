@@ -96,5 +96,28 @@ def distance_to_connectivity(dmat, dscale=None, sparsity=None):
     def optfun(x):
         return np.sum(np.exp(-dmat / x)) / denom - (1 - sparsity)
 
-    scale_factor = root_scalar(optfun, bracket=[1e-16, dscale]).root
+    # optfun is monotone increasing in x: each exp(-d/x) rises from 0 (d>0) /
+    # 1 (d=0) at x→0⁺ to 1 at x→∞, so the mean mass goes from (#zeros)/denom
+    # up to sparsity > 0. A root exists iff the target is above the x→0 floor.
+    # The old fixed bracket [1e-16, dscale] both (i) assumed a sign change that
+    # fails when the requested sparsity is below that floor — e.g. the diagonal
+    # alone forces mean ≥ 1/N, so sparsity ≥ 1−1/N is infeasible for small N —
+    # and (ii) could put the root above dscale. Guard the infeasible case and
+    # expand the upper bracket until it clears the root (same discipline as
+    # recurrence/simplicial.fit_rho_sigma).
+    lo = 1e-16
+    if optfun(lo) >= 0:
+        warnings.warn(
+            f"Requested sparsity {sparsity:g} is below the achievable floor "
+            f"for this matrix (the diagonal alone forces mean affinity "
+            f"≥ {np.mean(np.isclose(dmat, 0)):g}); returning the sharpest "
+            "kernel. Lower the sparsity target or use `dscale` directly."
+        )
+        return np.exp(-dmat / lo)
+    hi = max(dscale, float(np.max(dmat)), lo * 10)
+    for _ in range(100):
+        if optfun(hi) > 0:
+            break
+        hi *= 10
+    scale_factor = root_scalar(optfun, bracket=[lo, hi]).root
     return np.exp(-dmat / scale_factor)

@@ -100,6 +100,77 @@ class TestFiedlerEigenvectorOracle:
         )
 
 
+def _degree_heterogeneous_affinity(p=20, w_low=1.0, w_high=8.0, bridge=0.5):
+    """Two equal-size blocks with very different internal edge weights, so the
+    high-weight block's nodes have ~`w_high/w_low`× the degree. The community
+    structure (block 1 vs block 2) is unambiguous, but the *degree* imbalance
+    is what distinguishes RatioCut (unnormalised) from NCut (normalised)."""
+    N = 2 * p
+    A = np.zeros((N, N))
+    A[:p, :p] = w_low
+    A[p:, p:] = w_high
+    A[p - 1, p] = A[p, p - 1] = bridge
+    np.fill_diagonal(A, 0.0)
+    return A
+
+
+def _fiedler_from_affinity(A, **model_kwargs):
+    """Run RecurrenceManifold's spectral step on a precomputed affinity."""
+    import shrec.models.recurrence_manifold as RM
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(RM, "data_to_connectivity2", lambda X, **kw: A)
+        dummy_X = np.zeros((A.shape[0], 1))
+        model = RecurrenceManifold(standardize=False, **model_kwargs).fit(dummy_X)
+    return np.asarray(model.labels_)
+
+
+class TestNormalizedLaplacianOption:
+    """`normalize_laplacian=True` switches the spectral step to the NCut /
+    random-walk generalised eigenproblem `L v = λ D v` (the paper's
+    "preconditioning" remedy for response bias). It must still recover an
+    unambiguous block structure, and must produce a *measurably different*
+    embedding from the unnormalised default under degree heterogeneity (proof
+    the flag actually changes the operator).
+    """
+
+    def test_normalized_recovers_clean_block_split(self):
+        from sklearn.metrics import adjusted_rand_score
+        A = _two_block_affinity(p1=20, p2=20, bridge=1e-3)
+        v = _fiedler_from_affinity(A, n_components=1, normalize_laplacian=True)
+        split = (v > np.median(v)).astype(int)
+        truth = np.array([0] * 20 + [1] * 20)
+        assert adjusted_rand_score(truth, split) == 1.0
+
+    def test_normalized_differs_from_unnormalized_under_degree_bias(self):
+        A = _degree_heterogeneous_affinity()
+        v_unnorm = _fiedler_from_affinity(A, normalize_laplacian=False)
+        v_norm = _fiedler_from_affinity(A, normalize_laplacian=True)
+        v_unnorm = v_unnorm / (np.linalg.norm(v_unnorm) + 1e-12)
+        v_norm = v_norm / (np.linalg.norm(v_norm) + 1e-12)
+        cos = abs(float(np.dot(v_unnorm, v_norm)))
+        assert cos < 0.95, (
+            f"|cos| = {cos:.3f}: normalize_laplacian had no measurable effect; "
+            "the generalised eigenproblem is probably not being used."
+        )
+
+
+class TestEigenvectorShapeContract:
+    """MM-contract — `subset_by_index=[1, n_components]` returns exactly
+    `n_components` non-trivial eigenvectors (indices 1..n_components). Pins the
+    output shape so a future off-by-one in the index range is caught.
+    """
+
+    @pytest.mark.parametrize("n_components,expected_ndim", [(1, 1), (2, 2), (3, 2)])
+    def test_label_shape_matches_n_components(self, n_components, expected_ndim):
+        A = _two_block_affinity(p1=15, p2=15, bridge=1e-2)
+        v = _fiedler_from_affinity(A, n_components=n_components)
+        assert v.ndim == expected_ndim
+        if n_components == 1:
+            assert v.shape == (A.shape[0],)
+        else:
+            assert v.shape == (A.shape[0], n_components)
+
+
 class TestConnectivityGuard:
     """When the consensus graph is (nearly) disconnected, λ₂ ≈ 0 and the
     Fiedler eigenvector degenerates into a connected-component indicator

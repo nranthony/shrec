@@ -377,3 +377,70 @@ philosophies handle that without a ground truth:
   reference-implementation differential (MM5) → statistical/surrogate (null
   driver). SHREC has a clean example at every rung — an unusually good teaching
   vehicle for scientific-software testing in general.
+
+---
+
+# Round 4 — closing the survey items (2026-05-29)
+
+Took on the three remaining survey issues (#1 unnormalised Laplacian, #3
+`distance_to_connectivity` bracket, #5 eigenvector shape). Notes + a couple of
+honest negative results worth teaching from.
+
+## #5 was a false alarm — and that's a lesson too
+
+`scipy.linalg.eigh(L, subset_by_index=[1, n_components])` returns indices
+`1..n_components` *inclusive* = exactly `n_components` non-trivial eigenvectors.
+It was already correct. I'd flagged it as "off-by-one-prone." The right
+response to a *suspected* bug that turns out fine isn't to silently move on —
+it's to lock the current contract with a test (MM36) so the suspicion can't
+resurface and so a real future off-by-one is caught.
+
+- **📚 LEARNING TOPIC — "Inclusive vs half-open ranges in numerical APIs."**
+  scipy's `subset_by_index` is inclusive on both ends; NumPy slicing is
+  half-open; LAPACK's `il`/`iu` are 1-based inclusive. A short reference table
+  of who-means-what would prevent a whole genus of off-by-one bugs.
+
+## #3 — the diagonal floor makes some sparsity targets *infeasible*
+
+`distance_to_connectivity(sparsity=s)` solves for a kernel scale so the mean
+affinity equals `1−s`. But `cdist(X, X)` has a **zero diagonal**, and
+`exp(-0/x) = 1` for any `x`, so the `N` diagonal ones contribute a fixed
+`N/N² = 1/N` to the mean. The mean affinity therefore can never drop below
+`1/N`, so **any `s > 1 − 1/N` is unsatisfiable** — and for `N = 8`, `s = 0.99`
+needs mean `0.01 < 0.125 = 1/8`. The old `root_scalar` just crashed with the
+same "f(a) and f(b) must have different signs" we saw in the σ-solve. The fix
+detects infeasibility (`optfun(σ→0) ≥ 0`), warns, and returns the sharpest
+kernel; otherwise it expands the upper bracket until it provably contains the
+root (monotonicity guarantees one).
+
+- **📚 LEARNING TOPIC — "Feasibility before optimisation."** A recurring
+  scientific-computing bug: solving for a target without first asking whether
+  the target lies in the operator's range. The diagonal floor here is a clean,
+  countable example — you can *derive* the infeasible region (`s > 1 − 1/N`)
+  before running any solver. Pairs naturally with the σ-solve's tied-
+  neighbourhood degeneracy: both are "the equation has no solution" bugs.
+
+## #1 — degree bias, and an honest negative result
+
+Added `normalize_laplacian` (default off, paper-faithful). The teaching moment
+was the *experiment design*: I tried hard to build a graph where unnormalised
+spectral clustering **fails** the 2-way split and normalised succeeds — and on
+clean, balanced block structures, **both recover the split (ARI = 1)**. The
+degree bias does not show up in the *sign* of the Fiedler vector; it shows up
+in its *values*: on a degree-heterogeneous graph the unnormalised vector put
+~50% of its energy on the high-degree block, the normalised one ~0.1%. Since
+SHREC's continuous driver uses the eigenvector *values* (correlated against the
+true driver), not a binary cut, that value-level distortion is exactly what
+matters — but it's subtle enough that a naive ARI test would have shown "no
+difference" and hidden the whole point.
+
+- **📚 LEARNING TOPIC — "When the bug is in the values, not the labels."**
+  Spectral methods used for *embedding* (continuous coordinates) have different
+  failure modes than the same methods used for *clustering* (discrete labels).
+  RatioCut vs NCut barely changes the sign pattern on clean blocks but
+  substantially changes the coordinate. Great cautionary tale about choosing a
+  test metric that can actually see the failure you care about.
+- **📚 LEARNING TOPIC — "Negative results are results."** Document the cases
+  where the "obvious" fix shows no benefit on the obvious test. It stops the
+  next person re-litigating it and sharpens *why* the real effect is where it
+  is (here: values, not labels; continuous driver, not discrete).
