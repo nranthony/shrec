@@ -6,6 +6,9 @@ four "must" tests called out for the canonical-algorithm PR (§6 step 2).
 """
 import numpy as np
 import pytest
+from hypothesis import assume, given, settings
+from hypothesis import strategies as st
+from hypothesis.extra.numpy import arrays
 from scipy.spatial.distance import cdist
 
 from shrec.models.models import dataset_to_simplex, relu
@@ -100,6 +103,63 @@ class TestFuzzyUnionSymmetrisation:
         np.testing.assert_allclose(A, A.T, atol=1e-12)
         assert A.min() >= 0.0
         assert A.max() <= 1.0
+
+
+# --- §5b.1 MM1/MM3/MM4 (property-based) — invariants over arbitrary clouds ---
+
+_K = 3
+
+
+@st.composite
+def _point_clouds(draw):
+    """Random (n, d) point clouds with bounded, finite coordinates and enough
+    distinct points to support a k=3 neighbourhood."""
+    n = draw(st.integers(min_value=_K + 2, max_value=20))
+    d = draw(st.integers(min_value=1, max_value=4))
+    X = draw(arrays(
+        np.float64, (n, d),
+        elements=st.floats(-1e3, 1e3, allow_nan=False, allow_infinity=False),
+    ))
+    # At least k+2 distinct points, else the k-NN structure is ill-defined.
+    assume(len(np.unique(np.round(X, 6), axis=0)) >= _K + 2)
+    return X
+
+
+class TestSimplexInvariantsPropertyBased:
+    """Hypothesis generalises the hand-picked MM3/MM4 oracles to *arbitrary*
+    clouds and lets the search find adversarial inputs (it independently
+    rediscovers the tied-neighbourhood degeneracy that the σ-solve fallback
+    handles). For any input, `dataset_to_simplex` must return a symmetric
+    matrix with unit diagonal and entries in [0, 1], and every row's σ-solve
+    must either satisfy the defining equation or have taken the documented
+    ρ-fallback. See docs/math-learning-notes.md (property-based testing).
+    """
+
+    @settings(max_examples=40, deadline=None)
+    @given(X=_point_clouds())
+    def test_output_is_symmetric_unit_diagonal_in_unit_interval(self, X):
+        A = dataset_to_simplex(X, k=_K)
+        assert np.all(np.isfinite(A))
+        np.testing.assert_allclose(A, A.T, atol=1e-12)
+        np.testing.assert_allclose(np.diag(A), 1.0, atol=1e-12)
+        assert A.min() >= -1e-12 and A.max() <= 1.0 + 1e-12
+
+    @settings(max_examples=40, deadline=None)
+    @given(X=_point_clouds())
+    def test_sigma_solve_satisfies_equation_or_takes_fallback(self, X):
+        dmat = cdist(X, X)
+        dmat[dmat < 1e-10] = np.inf
+        dists = np.sort(np.partition(dmat, _K + 1, axis=1), axis=1)[:, 1:_K + 1]
+        target = np.log2(_K)
+        for row in dists:
+            rho, sigma = fit_rho_sigma(row, _K)
+            residual = abs(np.sum(np.exp(-relu(row - rho) / sigma)) - target)
+            tied_fallback = np.isclose(sigma, rho)
+            assert residual < 1e-6 or tied_fallback, (
+                f"row solve neither satisfied the equation (residual="
+                f"{residual:.3g}) nor took the ρ-fallback (σ={sigma:.3g}, "
+                f"ρ={rho:.3g})."
+            )
 
 
 # --- §5b.1 MM5 — cross-implementation parity --------------------------------

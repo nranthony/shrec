@@ -6,6 +6,8 @@ is one of the four "must" tests driving the canonical-algorithm PR
 which uses `TruncatedSVD(A)` instead of the Fiedler eigenvector of
 `L = D − A`. Locking in the fix flips this test green.
 """
+import warnings
+
 import numpy as np
 import pytest
 
@@ -95,4 +97,37 @@ class TestFiedlerEigenvectorOracle:
         assert cos > 0.99, (
             f"|cos(pred, analytical Fiedler)| = {cos:.4f}; "
             "RecurrenceManifold is not returning the Laplacian Fiedler vector."
+        )
+
+
+class TestConnectivityGuard:
+    """When the consensus graph is (nearly) disconnected, λ₂ ≈ 0 and the
+    Fiedler eigenvector degenerates into a connected-component indicator
+    rather than a smooth driver coordinate. `RecurrenceManifold.fit` must
+    warn so the silent failure becomes visible. A well-connected graph (the
+    MM22 bridge=1e-3 case) must NOT warn.
+    """
+
+    def _fit_on_affinity(self, A):
+        import shrec.models.recurrence_manifold as RM
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(RM, "data_to_connectivity2", lambda X, **kw: A)
+            dummy_X = np.zeros((A.shape[0], 1))
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                RecurrenceManifold(n_components=1, standardize=False).fit(dummy_X)
+        return [w for w in caught if "disconnected" in str(w.message)]
+
+    def test_disconnected_graph_warns(self):
+        A = _two_block_affinity(p1=10, p2=30, bridge=0.0)  # no bridge at all
+        assert self._fit_on_affinity(A), (
+            "RecurrenceManifold silently returned a component indicator on a "
+            "disconnected graph; expected a connectivity warning."
+        )
+
+    def test_connected_graph_does_not_warn(self):
+        A = _two_block_affinity(p1=10, p2=30, bridge=1e-3)  # MM22 case
+        assert not self._fit_on_affinity(A), (
+            "Connectivity warning fired on a well-connected graph (the MM22 "
+            "oracle case); the λ₂ threshold is too aggressive."
         )

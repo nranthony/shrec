@@ -1,5 +1,6 @@
 """Continuous-driver SHREC model — Fiedler eigenvector of the consensus
 recurrence Laplacian (paper Appendix B step 5)."""
+import warnings
 from datetime import datetime
 
 import numpy as np
@@ -53,9 +54,24 @@ class RecurrenceManifold(RecurrenceModel):
         affinity = np.asarray(neighbor_matrix)
         degree = affinity.sum(axis=1)
         laplacian = np.diag(degree) - affinity
-        _, eigvecs = scipy.linalg.eigh(
+        eigvals, eigvecs = scipy.linalg.eigh(
             laplacian, subset_by_index=[1, self.n_components],
         )
+
+        # Algebraic connectivity (λ₂) > 0 iff the graph is connected; a 0 has
+        # multiplicity = number of connected components. When λ₂ ≈ 0 the
+        # returned eigenvector lies in a degenerate near-null space and is a
+        # component indicator, not a smooth driver coordinate. Scale-free
+        # threshold: λ₂ small relative to the spectral scale (trace = Σ degree).
+        if eigvals[0] <= 1e-10 * degree.sum():
+            warnings.warn(
+                "Consensus recurrence graph is (nearly) disconnected "
+                f"(algebraic connectivity λ₂={eigvals[0]:.3e}); the Fiedler "
+                "eigenvector may be a connected-component indicator rather "
+                "than a smooth driver. Consider lowering `tolerance`/"
+                "`time_exclude` or increasing the response ensemble size."
+            )
+
         pt_vals = eigvecs.squeeze()
 
         if self.verbose:

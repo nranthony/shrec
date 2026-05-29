@@ -172,3 +172,208 @@ change); `fsolve` had been silently returning the stalled guess and nobody knew.
   handled. Both were needed — MM1 to find the stall, the pipeline tests to
   reveal that the naive fix changed real behaviour. This is the argument for
   keeping both altitudes of test, not just one.
+
+---
+
+# Round 2 — devising parallel & perpendicular tests (2026-05-28)
+
+After MM1–MM4 landed, surveyed the rest of the code surface + complementary
+literature (UMAP `smooth_knn_dist`, von Luxburg spectral-clustering tutorial,
+Sauer/Takens embedding, the SHREC paper Appendix B itself). Two axes:
+
+- **Parallel** = more of the same family (closed-form inner-math oracles) on
+  operators that currently have *none*.
+- **Perpendicular** = different *methodology*: property-based, metamorphic,
+  differential-vs-reference, fuzz/stability, statistical/surrogate.
+
+## Parallel candidates (closed-form, cheap)
+
+- **MM6** — `kernel.data_to_connectivity` p-norm limits: `ord=1` ⇒ elementwise
+  mean of per-channel kernels; `ord→∞` ⇒ min-over-channels distance (Sauer
+  `inf_k d^(k)`). Verified no NaN at ord=500; limit shape is assertable.
+- **MM7/MM8** — `cdist` isometry invariance (random orthogonal Q + translation)
+  and triangle inequality. Trivially true for euclidean, but pins that no code
+  path rescales distances asymmetrically.
+- **MM9** — `distance_to_connectivity(sparsity=…)` actually hits the requested
+  sparsity, and is monotone in the scale.
+- **MM10** — `_leiden` backend agreement (graspologic vs igraph vs leidenalg)
+  on the barbell graph: ARI=1 across backends.
+- **MM11** — `unionfind.DisjointSet` parity with
+  `scipy.cluster.hierarchy.DisjointSet` on random merge lists.
+- **NEW — Laplacian algebra**: `L = D−A` has row sums 0 (constant vector is
+  eigenvector at λ=0); eigenvalues ≥ 0; λ₂ > 0 **iff** the graph is connected.
+  This is the oracle for the disconnected-graph bug below.
+- **NEW — embedding reconstruction**: `embed_ts`/`hankel_matrix` output equals a
+  hand-rolled delay stack `[x_t, x_{t-τ}, …]`; padding modes preserve length.
+
+## Perpendicular candidates (different methodology)
+
+- **📚 LEARNING TOPIC — property-based testing (Hypothesis).** `hypothesis` is
+  already a dev dep and registered in pytest but used *nowhere*. Strong fit
+  for the algebraic invariants: for arbitrary small clouds, assert
+  `dataset_to_simplex` output is symmetric/in [0,1]/unit-diagonal; assert
+  `fit_rho_sigma` residual < tol OR the tied-degenerate fallback fired. Lets
+  the machine search for the adversarial inputs we'd never hand-pick (it would
+  have found the tied-neighbourhood case on its own).
+- **📚 LEARNING TOPIC — metamorphic testing.** When there's no ground-truth
+  output, test *relations between* outputs: monotonicity (more coupling ⇒
+  higher recovery ARI), graceful degradation (ARI decreases monotonically as
+  noise σ rises), adding a pure-noise channel must not *improve* a clean
+  recovery. These encode the paper's qualitative claims as ordering assertions.
+- **📚 LEARNING TOPIC — differential / reference-oracle testing.** Pin our
+  operators against an independent implementation: `dataset_to_simplex` vs
+  `umap.umap_.fuzzy_simplicial_set` (this is MM5, currently xfail — worth
+  *reconciling conventions* rather than leaving frozen); `RecurrenceManifold`
+  Fiedler vs `sklearn.manifold.SpectralEmbedding`; `_leiden` vs raw backends.
+- **📚 LEARNING TOPIC — surrogate / null-hypothesis testing.** Borrowed from
+  nonlinear-time-series practice (the paper itself uses surrogate ideas):
+  feed SHREC *independent* responses with **no** shared driver and assert the
+  recovered driver is statistically indistinguishable from noise (low ARI /
+  flat eigenvector). Guards against the method hallucinating structure — the
+  most important property a causal-discovery tool can have.
+- **📚 LEARNING TOPIC — numerical fuzz / stability.** Sweep dtype (float32 vs
+  64), tiny/huge distance scales, near-duplicate rows, NaN injection. The σ
+  bug was exactly a stability failure; a fuzz harness generalises the guard.
+
+## Potential issues found while surveying (grounded, not speculative)
+
+1. **Unnormalised Laplacian degree bias.** `RecurrenceManifold` uses `L = D−A`
+   (RatioCut), not `L_sym`/`L_rw` (NCut). On degree-heterogeneous consensus
+   graphs the Fiedler vector localises on high-degree nodes (von Luxburg). The
+   paper itself flags this: "correct for response bias … might require
+   preconditioning the graph Laplacian." → metamorphic test: skewing one
+   channel's recurrence density should not dominate the recovered driver.
+   **📚 LEARNING TOPIC — RatioCut vs NCut and why normalisation matters.**
+2. **Disconnected-graph degeneracy (demonstrated).** With no bridge between
+   blocks, λ₂ = 0 (2-dim null space) and `eigh(subset_by_index=[1,1])` returns
+   an arbitrary component *indicator* (step function {0, 0.183}), not a smooth
+   driver. No connectivity check exists. → guard: assert/ warn when λ₂ ≈ 0;
+   test on a deliberately disconnected affinity.
+3. **`distance_to_connectivity` bracket fragility — twin of the σ bug.**
+   `root_scalar(optfun, bracket=[1e-16, dscale])` assumes a sign change that
+   isn't guaranteed for every distance distribution; same failure class we
+   just fixed in `fit_rho_sigma`. Needs the same bracket-guard discipline.
+4. **igraph backend silently ignores `resolution`.** `communities._leiden`
+   igraph branch hardcodes `resolution_parameter=1.0` instead of forwarding
+   `resolution`. A backend-agreement test (MM10) that varies resolution would
+   catch this. (graspologic path does forward it correctly.)
+5. **`subset_by_index=[1, n_components]` is inclusive-count-off-by-one-prone.**
+   For `n_components=1` it returns one vector (good), but the semantics ("index
+   1 through n_components") differ from "n_components vectors" for >1. Worth a
+   shape test pinning the intended contract.
+
+---
+
+# Round 3 — theory deep-dives (2026-05-29)
+
+Educational write-ups attached to the three fixes (igraph resolution, the
+connectivity guard, the Hypothesis suite). These are deliberately fuller than
+scratch notes — they're the seed text for Quarto explainer pages. Each is
+self-contained; trim/expand when collating.
+
+## A. The graph Laplacian and algebraic connectivity (behind the MM33 guard)
+
+For an undirected weighted graph with affinity `A` and degree `D = diag(Σ_j A_ij)`,
+the **combinatorial Laplacian** is `L = D − A`. Three facts make it the natural
+operator for the continuous driver:
+
+1. **`L` is symmetric PSD.** For any vector `f`,
+   `fᵀ L f = ½ Σ_{i,j} A_ij (f_i − f_j)²  ≥ 0`.
+   This quadratic form is the "energy" of `f` on the graph — small when `f`
+   varies slowly across strongly-connected nodes. So the *smallest* non-trivial
+   eigenvector is the *smoothest non-constant coordinate*: exactly what a slowly
+   varying shared driver should look like on the recurrence graph.
+2. **The constant vector is always an eigenvector at λ₁ = 0** (`L·1 = 0`,
+   because rows sum to zero). That's why `RecurrenceManifold` asks `eigh` for
+   `subset_by_index=[1, …]` — it *skips* index 0, the uninformative constant.
+3. **Algebraic connectivity.** The second-smallest eigenvalue λ₂ (the *Fiedler
+   value*) is `> 0` **iff** the graph is connected. More strongly: *the
+   multiplicity of the eigenvalue 0 equals the number of connected components*,
+   and the null-space is spanned by the component-indicator vectors.
+
+Fact 3 is the entire content of the MM33 bug. When the consensus graph splits
+into (nearly) disconnected pieces, λ₂ → 0 and the "Fiedler" eigenvector we pull
+out is an arbitrary mixture of component indicators — a *step function*, not a
+driver. `eigh` returns it without complaint. The guard watches λ₂ against the
+spectral scale (`trace L = Σ degree`) and warns.
+
+- **📚 LEARNING TOPIC — "The Laplacian quadratic form."** Derive
+  `fᵀLf = ½ Σ A_ij (f_i−f_j)²` from scratch; it's three lines and it demystifies
+  why spectral methods "find smooth coordinates." Best single figure in the
+  whole topic: a path graph with its first few Laplacian eigenvectors drawn as
+  standing waves (they're literally `cos(πki/n)` — discrete vibration modes).
+- **📚 LEARNING TOPIC — "Eigenvalue 0 counts components."** Worked 2-block
+  example with the bridge weight swept from 1 → 0, watching λ₂ slide to 0 and
+  the eigenvector morph from a smooth ramp into a hard step. This *is* the MM22
+  → MM33 continuum in one animation.
+
+## B. RatioCut vs NCut — why `L=D−A` is not the whole story
+
+Minimising `fᵀLf` subject to `f ⟂ 1`, `‖f‖=1` is a relaxation of **RatioCut**
+(balance by *number of nodes* per side). The normalised Laplacians
+`L_sym = D^{-1/2} L D^{-1/2}` and `L_rw = D^{-1} L` relax **NCut** (balance by
+*volume* = total degree per side). The practical difference: with the
+unnormalised `L`, a few very high-degree nodes dominate the Fiedler vector, so
+the embedding can fixate on the densest response channel rather than the shared
+driver. von Luxburg's tutorial recommends normalised Laplacians by default, and
+the SHREC paper itself lists "preconditioning the graph Laplacian" as the fix
+for response bias. We did **not** change the operator (that would shift the
+paper-faithful behaviour); MM33 just makes the degenerate end visible.
+
+- **📚 LEARNING TOPIC — "RatioCut vs NCut, and degree bias."** Side-by-side
+  Fiedler vectors of `L` vs `L_rw` on a graph with one inflated-degree cluster.
+  Tie it back to the SHREC "response bias" remark — a concrete reason a user
+  might want a normalised variant as an option.
+
+## C. Modularity, CPM, and the resolution parameter (behind the igraph fix)
+
+Leiden optimises a **quality function** over partitions. Two choices:
+
+- **Modularity** compares within-community edge weight to what you'd expect in a
+  degree-preserving random graph. It has a famous **resolution limit**: below a
+  size set by the *total* graph weight, it cannot resolve small communities and
+  *merges* them. This is precisely the MM20 xfail — the period-4 driver's four
+  states collapse into two modularity communities.
+- **CPM (Constant Potts Model)** compares within-community density to a fixed
+  threshold `γ` (the resolution). No resolution limit, and `γ` has a direct
+  reading: communities are denser than `γ`, sparser between. Sweeping `γ` traces
+  the whole hierarchy from one blob (γ→0) to all singletons (γ→1).
+
+The igraph bug hardcoded the resolution to 1.0, so `γ` was silently ignored — a
+user sweeping resolution to escape the modularity resolution limit would see *no
+change*. MM20 (period-4) is the standing motivation: the documented path to
+closing it is a resolution/CPM sweep, which the bug would have quietly defeated.
+
+- **📚 LEARNING TOPIC — "The modularity resolution limit."** The cleanest demo
+  of why a hyperparameter-free method can still miss structure: a ring of
+  cliques where modularity provably merges adjacent cliques once there are
+  enough of them. Direct line to why SHREC's period-4 case is an xfail and what
+  CPM buys you.
+
+## D. Why property-based + metamorphic testing fits this codebase
+
+Most SHREC operators have *no closed-form output* on real inputs — you can't
+write down the "right" affinity matrix for a logistic ensemble. Two testing
+philosophies handle that without a ground truth:
+
+- **Property-based (Hypothesis).** Don't assert the output value; assert
+  *properties that must hold for every input* (symmetry, [0,1] range, unit
+  diagonal, residual-or-fallback) and let the engine search the input space —
+  including shrinking any failure to a minimal counterexample. It explores the
+  adversarial corners (duplicate points, collinear clouds, extreme scales) that
+  a human fixture-writer would never enumerate. Our `_point_clouds` strategy is
+  the reusable template: bound the values, `assume` away the genuinely
+  ill-posed inputs, keep `max_examples` modest because each example runs the
+  per-row solver.
+- **Metamorphic.** Assert *relations between* outputs of related inputs:
+  permutation invariance (already MM13), scale invariance (MM2), and — not yet
+  built — monotone degradation (more noise ⇒ lower ARI) and the null-input
+  property (no shared driver ⇒ no recovered structure). These encode the
+  paper's qualitative claims as inequalities, which is often all the science
+  actually asserts.
+
+- **📚 LEARNING TOPIC — "Testing without an oracle."** A short methodology page:
+  the ladder from exact oracle (MM1) → invariance/metamorphic (MM2, MM13) →
+  reference-implementation differential (MM5) → statistical/surrogate (null
+  driver). SHREC has a clean example at every rung — an unusually good teaching
+  vehicle for scientific-software testing in general.

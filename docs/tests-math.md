@@ -34,7 +34,7 @@ with inputs whose answers can be written down.
 | MM7 | ⏳ | `cdist` isometry invariance under random orthogonal `Q` + translation. |
 | MM8 | ⏳ | `cdist` triangle inequality on random triples. |
 | MM9 | ⏳ | `sparsify_by_quantile` produces ≥ target sparsity; idempotent at the same threshold. |
-| **MM10 (must)** | ⏳ | `graph/communities.py:_leiden` — backend agreement on the barbell graph (ARI=1 across backends). |
+| **MM10 (must)** | ✅ | `graph/communities.py:_leiden` — backend agreement on the barbell graph (ARI=1 across backends). graspologic leg always runs; igraph/leidenalg/cdlib gated by `importorskip`. Also locks the igraph `resolution`-forwarding fix (the branch had hardcoded `resolution_parameter=1.0`). See `tests/test_graph_communities.py`. |
 | MM11 | ⏳ | `graph/unionfind.py` parity with `scipy.cluster.hierarchy.DisjointSet`. |
 | MM12 | ✅ | `utils/graph_tools.common_neighbors_ratio` — vectorised matches loop on random binary matrices to `atol=0`; K_n with self-loops returns zero. See `tests/test_graph_adjacency.py`. |
 
@@ -67,6 +67,7 @@ Inputs constructed so the answer is provably the one we want.
 | **MM20 (must)** | ⚠️ xfail | Sauer limit, period-4 driver. Default Leiden at `resolution=1.0` collapses to 2 communities → ARI ≈ 0.50. Closing requires resolution tuning or CPM objective (graspologic's CPM backend currently panics). |
 | MM21 | ⏳ | Period-8 driver with stochastic forcing (`σ_noise = 0.04`): ARI > 0.85. |
 | **MM22 (must)** | ✅ | Block-stochastic affinity: hand-construct `A = block_diag(J_p1, J_p2)` (unequal sizes) with a small bridge, assert RecurrenceManifold output `|cos|` > 0.99 against the analytical Fiedler vector. Distinguishes Fiedler from second SVD vector on irregular graphs. See `tests/test_models_recurrence_manifold.py`. |
+| **MM33 (must)** | ✅ | `RecurrenceManifold` connectivity guard: a (nearly) disconnected consensus graph has `λ₂ ≈ 0`, so the Fiedler eigenvector degenerates into a component indicator. `fit` must warn (and the well-connected MM22 case must not). Scale-free threshold `λ₂ ≤ 1e-10·Σdegree`. See `tests/test_models_recurrence_manifold.py`. |
 | MM23 | ⏳ | Cycle-graph affinity: Fiedler is `cos(2π i/n)` up to sign. |
 | MM24 | ⏳ | Identity-driver: `N = 1, x(t) = z(t)` (Rössler `z₁` trajectory) — Spearman `|ρ| > 0.95`. |
 | MM25 | ⏳ | Linear measurement: `x_k(t) = a_k z(t) + b_k` — `|ρ| > 0.9` after standardisation. |
@@ -102,20 +103,26 @@ Cheap mechanical pinning.
 
 | Section | Total | Green | xfail | Deferred |
 |---------|-------|-------|-------|----------|
-| §5b.1 inner math      | 12 | 5 | 1 | 6  |
+| §5b.1 inner math      | 12 | 6 | 1 | 5  |
 | §5b.2 invariances     | 6  | 3 | 0 | 3  |
-| §5b.3 limiting cases  | 8  | 2 | 1 | 5  |
+| §5b.3 limiting cases  | 9  | 3 | 1 | 5  |
 | §5b.4 scaling laws    | 3  | 0 | 0 | 3  |
 | §5b.5 sklearn contract| 3  | 3 | 0 | 0  |
-| **total**             | 32 | 13 | 2 | 17 |
+| **total**             | 33 | 15 | 2 | 16 |
 
-The "must" tests (MM1–MM6, MM10, MM13–MM14, MM19–MM22, MM27) are the
-minimum to call the algorithm green. Of the 13 must-tests, **10 are
-green, 2 are xfail-documented, and 1 is still deferred**. The inner-
+MM1, MM3 and MM4 also have **Hypothesis property-based** generalisations
+(`TestSimplexInvariantsPropertyBased`) that assert the invariants over
+machine-generated clouds and independently rediscover the tied-neighbourhood
+σ-degeneracy.
+
+The "must" tests (MM1–MM6, MM10, MM13–MM14, MM19–MM22, MM27, MM33) are
+the minimum to call the algorithm green. Of the 14 must-tests, **10 are
+green, 2 are xfail-documented, and 2 are still deferred**. The inner-
 math closed-form checks MM1–MM4 are now green (and MM1 surfaced and
-fixed the `fsolve` σ-solve stall); the remaining gaps are the consensus
-aggregation MM6, the backend-agreement check MM10, and the paper-figure
-regression MM27.
+fixed the `fsolve` σ-solve stall); MM10 (backend agreement) and MM33
+(connectivity guard) landed alongside the igraph-`resolution` and
+disconnected-graph fixes. The remaining must-gaps are the consensus /
+kernel p-norm-limit check MM6 and the paper-figure regression MM27.
 
 The deferred items are the natural next batch of work whenever the
 math-correctness suite is revisited.
