@@ -7,21 +7,53 @@ of Gilpin, *Phys. Rev. X* **15**, 011005 (2025).
 
 ## The problem
 
-An unknown driver $z(t)$ governs $N$ observed responses
-$x_1(t), \dots, x_N(t)$ via a skew-product dynamical system:
+An unknown driver $z(t)$ governs $N$ response dynamical systems via a
+**skew-product** structure (the driver feeds the responses, but never the
+reverse):
 
-$$\dot{y}_k(t) = g_k\bigl[z(t),\, y_k(t),\, t\bigr], \qquad x_k(t) = M_k \cdot y_k(t).$$
+$$\dot{y}_k(t) = g_k\bigl[z(t),\, y_k(t),\, t\bigr], \qquad x_k(t) = M_k \circ y_k(t).$$
 
-We only see the scalar measurements $x_k$. SHREC recovers $z(t)$
-— either as a discrete sequence of states or as a continuous signal —
-from the matrix of responses alone.
+Here, for each response $k \in \{1, \dots, N\}$:
+
+- $y_k(t)$ is the **full (latent) response state** — a vector evolving on
+  its own attractor $\mathcal{Y}_k$.
+- $g_k[\cdot]$ is the **response vector field**, which takes the shared
+  driver $z(t)$ as one of its inputs.
+- $M_k$ is the **measurement operator**: $x_k(t) = M_k \circ y_k(t)$ is the
+  *single scalar* we actually observe. We write $\circ$ (composition)
+  rather than a matrix product because $M_k$ is generally **nonlinear and
+  non-invertible** — in the paper's demo it is a random Gaussian filter.
+  This is exactly what makes the problem hard: the measurement throws away
+  most of $y_k$.
+
+We only see the scalar time series $x_k$. SHREC recovers $z(t)$ — either as
+a discrete sequence of states or as a continuous signal — from the matrix
+of responses alone.
 
 The theoretical foundation is **Sauer's recurrence theorem** (PRL 2004):
 a recurrence in the reconstructed response
 $\hat{y}_k(t) \approx \hat{y}_k(t')$ *implies* a recurrence in the
-driver $z(t) \approx z(t')$. The converse does not hold. SHREC
-exploits this one-directional implication by building consensus across
-all $N$ responses.
+driver $z(t) \approx z(t')$. The converse does *not* hold (a driver
+recurrence need not show up in every response, because of the skew-product
+structure). SHREC exploits this one-directional implication by building
+consensus across all $N$ responses: pooling many responses recovers the
+driver recurrences that any single response misses.
+
+### Notation used throughout
+
+| Symbol | Meaning |
+|---|---|
+| $N$ (also $K$) | number of response time series. The paper writes the consensus sum over $k = 1,\dots,K$ with $K = N$. |
+| $T$ | number of time samples in each series; the recurrence graph has $T$ nodes. |
+| $i, j$ | **time-point** indices ($1 \dots T$) — rows/columns of a recurrence matrix. |
+| $k$ | **response** index ($1 \dots N$) — which observed series. |
+| $m$ | **neighbor** index ($1 \dots M$) — ranks the $M$ nearest neighbors of a point. |
+| $D, \tau$ | time-delay embedding dimension and delay (Stage 1). |
+| $M$ | nearest-neighbor count, the one structural hyperparameter (UMAP's `n_neighbors`). |
+
+Note that $D$ denotes the embedding dimension in Stage 1, but is reused for
+the diagonal **degree matrix** in Stage 4 — the paper overloads the symbol,
+and we flag it again where it recurs.
 
 ---
 
@@ -51,36 +83,63 @@ per-point** construction borrowed from UMAP (McInnes et al., JOSS 2018).
 
 ### 2a. Pairwise distances
 
-For each response $k$, compute:
+For each response $k$, compute the $T \times T$ distance matrix between
+every pair of embedded time points $i$ and $j$:
 
 $$d^{(k)}_{ij} = \bigl\|\hat{y}_k(i) - \hat{y}_k(j)\bigr\|.$$
 
+A small $d^{(k)}_{ij}$ means times $i$ and $j$ are a candidate *recurrence*
+in response $k$ — the trajectory returned close to where it was.
+
 ### 2b. Local scale parameters $\rho_i$, $\sigma_i$
 
-For each point $i$, take its $M$ nearest neighbours and set:
+These two parameters are computed **per row** (per time point $i$), which
+is what makes the threshold adaptive. Let $\{d^{(k)}_{im}\}_{m=1}^{M}$ be
+the distances from point $i$ to its $M$ nearest neighbours, where $M$ is
+the one structural hyperparameter and $m$ ranks those neighbours.
+
+- $\rho_i$ — the distance to the **closest** neighbour:
 
 $$\rho_i = \min_m\, d^{(k)}_{im}$$
 
-Then solve for $\sigma_i$ such that:
+- $\sigma_i$ — a local **bandwidth**, found by a 1-D root solve so that:
 
 $$\log_2 M = \sum_{m=1}^{M} \exp\!\Bigl[-\frac{\operatorname{ReLU}(d^{(k)}_{im} - \rho_i)}{\sigma_i}\Bigr]$$
 
+where $\operatorname{ReLU}(x) \equiv \max(0, x)$ clamps negative arguments
+to zero. Because $\rho_i$ is subtracted first, the nearest neighbour itself
+contributes $\operatorname{ReLU}(0) = 0 \Rightarrow e^{0} = 1$ to the sum,
+and anything closer than $\rho_i$ is also clamped to a full weight of $1$.
+
 **Intuition.** This constrains each point to have exactly $\log_2 M$
 "effective" neighbours in a soft sense — analogous to the perplexity
-constraint in t-SNE. The $\operatorname{ReLU}(d - \rho)$ term subtracts
+constraint in t-SNE. The $\operatorname{ReLU}(d - \rho_i)$ term subtracts
 off the nearest-neighbour distance, so affinity is measured relative to
-the local scale. In dense regions $\sigma_i$ is small (sharp falloff);
+the local scale. The bandwidth $\sigma_i$ then sets how fast affinity
+decays with distance: in dense regions $\sigma_i$ is small (sharp falloff);
 in sparse regions it is large (gentle falloff). This **adapts the
-recurrence threshold to local attractor density**.
+recurrence threshold to local attractor density**, replacing the single
+global threshold $\varepsilon$ of a classical recurrence plot.
 
 ### 2c. Per-response affinity
 
 $$A^{(k)}_{ij} = \exp\!\Bigl[-\frac{\operatorname{ReLU}(d^{(k)}_{ij} - \rho_i)}{\sigma_i}\Bigr]$$
 
-This matrix is asymmetric (because $\rho_i, \sigma_i$ are row-specific).
-Symmetrise via the **fuzzy union**:
+Each entry $A^{(k)}_{ij} \in (0, 1]$ is the **affinity** (edge weight)
+between time points $i$ and $j$: it is $1$ for a perfect recurrence and
+decays toward $0$ as the points separate. This is the same construction
+used in UMAP's fuzzy simplicial complex.
+
+This matrix is asymmetric (because $\rho_i, \sigma_i$ are row-specific, so
+$A^{(k)}_{ij} \ne A^{(k)}_{ji}$ in general). Symmetrise via the **fuzzy
+union** — the probabilistic "or" of the two directed edges:
 
 $$A^{(k)} \;\leftarrow\; A^{(k)} + {A^{(k)}}^\top - A^{(k)} \circ {A^{(k)}}^\top$$
+
+where ${A^{(k)}}^\top$ is the transpose and $\circ$ is the **Hadamard
+(elementwise) product**. Read entrywise, this is
+$a + b - ab$ — the probability that edge $i\!\to\!j$ *or* $j\!\to\!i$ is
+present if each exists independently with probability $a$, $b$.
 
 **Code:** `shrec.recurrence.simplicial.dataset_to_simplex`
 
@@ -90,9 +149,14 @@ $$A^{(k)} \;\leftarrow\; A^{(k)} + {A^{(k)}}^\top - A^{(k)} \circ {A^{(k)}}^\top
 
 ## Stage 3 — Consensus aggregation {#stage3}
 
-Average the per-response affinity matrices into a single consensus graph:
+Average the per-response affinity matrices into a single consensus graph
+(here $K = N$ is the number of responses, following the paper's notation):
 
 $$A_{ij} = \frac{1}{K}\sum_{k=1}^{K} A^{(k)}_{ij}$$
+
+The result $A$ is a single $T \times T$ weighted graph over time points: a
+**consensus recurrence matrix** in which an edge is strong only if many
+responses agree that times $i$ and $j$ recur together.
 
 **Why averaging?** The classical Sauer approach uses
 $d^*_{ij} = \inf_k d^{(k)}_{ij}$ — consensus by minimum distance (Boolean
@@ -114,10 +178,18 @@ paper's canonical choice is the arithmetic mean.
 
 ### 4a. Discrete driver — Leiden community detection
 
+A discrete driver cycles among a finite set of $s \le T$ unique states, so
+reconstruction reduces to labelling each of the $T$ time points with one of
+$s$ symbols (labels are only defined up to permutation — any relabelling of
+the symbols is equivalent). Finding the globally optimal labelling is an
+NP-hard min-cut problem, so SHREC uses a heuristic.
+
 The consensus graph $A$ defines a weighted network over time points.
 Time points sharing the same discrete driver state form densely connected
 communities. **Leiden** (a modularity-optimisation heuristic) partitions
 $A$ into communities whose labels form the reconstructed discrete driver.
+Crucially, Leiden also **determines the number of communities $s$
+automatically** — it is not a preset hyperparameter.
 
 **Physical interpretation.** $A$ defines a Markov chain. If $A$
 decomposes into disjoint subgraphs, random walkers are kinetically trapped
@@ -131,15 +203,26 @@ walkers dwell before escaping. Community detection finds these basins.
 
 Compute the **graph Laplacian**:
 
-$$L = D - A, \qquad D_{ii} = \sum_j A_{ij}$$
+$$L = D - A, \qquad D_{ij} = \delta_{ij}\sum_{l} A_{il}$$
+
+Here $D$ is the **diagonal degree matrix** (not the embedding dimension of
+Stage 1 — the paper reuses the letter). The Kronecker delta
+$\delta_{ij}$ — which is $1$ when $i = j$ and $0$ otherwise — forces $D$ to
+be diagonal, with each diagonal entry $D_{ii}$ equal to the total edge
+weight (the *degree*) of node $i$.
 
 The Fiedler vector is the eigenvector of $L$ corresponding to the
 **smallest non-zero eigenvalue**:
 
 $$L\,v = \lambda\,v, \qquad \lambda_0 = 0 < \lambda_1 \le \lambda_2 \le \cdots$$
 
-The Fiedler vector $v_1$ is the reconstructed continuous driver. It
-captures the *slowest mode of variation* on the consensus graph — the
+The eigenvalues $\lambda$ are ordered ascending; $\lambda_0 = 0$ always
+exists with a constant eigenvector $v_0$ (which carries no information).
+The **Fiedler vector** $v_1$ — the eigenvector for the smallest *non-zero*
+eigenvalue $\lambda_1$ — is the reconstructed continuous driver. It
+captures the *slowest mode of variation* on the consensus graph: the
+smoothest non-trivial way to assign a value to each time point such that
+strongly-connected (recurrent) times receive similar values. That is the
 dominant driver dynamics.
 
 This is mathematically identical to **Laplacian eigenmaps** / **diffusion
