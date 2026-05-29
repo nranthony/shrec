@@ -7,6 +7,8 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
+from sklearn.metrics import adjusted_rand_score
+
 from shrec.models.models import _leiden
 
 
@@ -71,3 +73,51 @@ class TestNetworkXModernAPI:
         A = sp.csr_matrix(_barbell_adjacency(n=5).astype(float))
         indices, labels = _leiden(A, method="cdlib")
         assert len(indices) == A.shape[0]
+
+
+# --- §5b.1 MM10 — Leiden backend agreement ----------------------------------
+
+def _barbell_ground_truth(n=5):
+    """The two K_n cliques are the two ground-truth communities."""
+    return np.array([0] * n + [1] * n)
+
+
+class TestLeidenBackendAgreement:
+    """MM10 (must) — on a clean barbell (two cliques + one bridge) every
+    Leiden backend must recover the same 2-community partition (ARI=1). The
+    barbell has an unambiguous community structure, so backend-specific
+    defaults (RNG, tie-breaking) should not change the answer.
+
+    graspologic is a hard dependency so its leg always runs; igraph /
+    leidenalg / cdlib are gated by `importorskip` and only run under the
+    optional extra.
+    """
+
+    def test_graspologic_recovers_two_cliques(self):
+        A = _barbell_adjacency(n=6)
+        _, labels = _leiden(A, method="graspologic", random_state=1)
+        assert adjusted_rand_score(_barbell_ground_truth(6), labels) == 1.0
+
+    @pytest.mark.parametrize("method", ["igraph", "leidenalg", "cdlib"])
+    def test_optional_backends_agree_with_graspologic(self, method):
+        pytest.importorskip(method if method != "cdlib" else "cdlib")
+        A = _barbell_adjacency(n=6)
+        _, ref = _leiden(A, method="graspologic", random_state=1)
+        _, other = _leiden(A.astype(float), method=method)
+        assert adjusted_rand_score(ref, other) == 1.0
+
+
+class TestIgraphResolutionForwarded:
+    """Regression for the igraph branch hardcoding `resolution_parameter=1.0`
+    and dropping the caller's `resolution`. With the bug present, sweeping
+    `resolution` has no effect and the partition is identical at every value.
+    After the fix, a high CPM resolution shatters the graph into more
+    communities than a low one.
+    """
+
+    def test_resolution_changes_community_count(self):
+        pytest.importorskip("igraph")
+        A = _barbell_adjacency(n=6).astype(float)
+        _, coarse = _leiden(A, method="igraph", objective="cpm", resolution=0.01)
+        _, fine = _leiden(A, method="igraph", objective="cpm", resolution=0.99)
+        assert len(np.unique(fine)) > len(np.unique(coarse))

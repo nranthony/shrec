@@ -6,7 +6,7 @@ neighbour distance, then root-solve for `σ_i` such that
 affinity is symmetrised via the fuzzy union `A + Aᵀ − A∘Aᵀ`.
 """
 import numpy as np
-from scipy.optimize import fsolve
+from scipy.optimize import brentq
 from scipy.spatial.distance import cdist
 
 
@@ -14,7 +14,40 @@ def relu(x):
     return np.maximum(0, x)
 
 
-def dataset_to_simplex(X, k=20, tol=1e-6, precomputed=False):
+def fit_rho_sigma(knn_dists, k, tol=1e-12):
+    """Solve Appendix-B step 3 for one point's local connectivity parameters.
+
+    Args:
+        knn_dists (np.ndarray): the point's k nearest-neighbour distances,
+            sorted ascending (so ``knn_dists[0]`` is the closest neighbour).
+        k (int): neighbour count setting the target mass ``log2(k)``.
+        tol (float): brentq absolute tolerance on σ (the root location).
+
+    Returns:
+        (rho, sigma): ``rho`` is the nearest-neighbour distance; ``sigma``
+        root-solves ``Σ_m exp(-ReLU(d_m - rho)/sigma) = log2(k)``.
+    """
+    rho = knn_dists[0]
+
+    def func(sig):
+        return sum(np.exp(-relu(knn_dists - rho) / sig)) - np.log2(k)
+
+    # func is strictly increasing in σ: each term exp(-x/σ) rises from 0 (x>0)
+    # or 1 (x=0) at σ→0⁺ to 1 at σ→∞. Generically it crosses zero once, so
+    # brentq on a wide bracket finds the root robustly where fsolve's step-size
+    # convergence test silently stalls at the initial guess on a fraction of
+    # rows. The exception is a fully-tied neighbourhood (all k nearest at the
+    # same distance, e.g. from clipped/quantised series): the mass is pinned at
+    # k > log₂k for every σ, so no root exists. σ is then indeterminate for the
+    # k-NN; fall back to ρ (scale-covariant, sets the decay scale for the tail).
+    lo, hi = 1e-12, 1e6
+    if func(lo) >= 0:
+        return rho, rho
+    sigma = brentq(func, lo, hi, xtol=tol)
+    return rho, sigma
+
+
+def dataset_to_simplex(X, k=20, tol=1e-12, precomputed=False):
     """
     Fuzzy simplicial complex over a single point cloud.
 
@@ -39,10 +72,7 @@ def dataset_to_simplex(X, k=20, tol=1e-6, precomputed=False):
     dmat_zerofilled[dmat_zerofilled < 1e-10] = np.inf
     dists = np.partition(dmat_zerofilled, k + 1, axis=1)
     dists = np.sort(dists, axis=1)[:, 1:k + 1]
-    rho = dists[:, 0]
     for i in range(n):
-        def func(sig): return sum(np.exp(-relu(dists[i] - rho[i]) / sig)) - np.log2(k)
-        def jac(sig): return sum(np.exp(-relu(dists[i] - rho[i]) / sig) * relu(dists[i] - rho[i])) / sig**2
-        sigma_i = fsolve(func, rho[i], fprime=jac, xtol=tol)[0]
-        dmat[i] = np.exp(-relu(dmat[i] - rho[i]) / sigma_i)
+        rho_i, sigma_i = fit_rho_sigma(dists[i], k, tol=tol)
+        dmat[i] = np.exp(-relu(dmat[i] - rho_i) / sigma_i)
     return dmat + dmat.T - dmat * dmat.T

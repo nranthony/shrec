@@ -60,8 +60,13 @@ def _leiden(g, method="graspologic", objective="modularity", resolution=1.0, ran
         indices, labels = np.array([(key, partition[key]) for key in partition]).T
 
     elif method == "igraph":
+        # igraph names its objectives "modularity" / "CPM" and takes the
+        # resolution through `resolution_parameter`. The previous call
+        # hardcoded `resolution_parameter=1.0`, silently dropping the caller's
+        # `resolution` (the graspologic branch forwards it correctly).
+        objective_function = "CPM" if objective == "cpm" else "modularity"
         cluster_obj = g_ig.community_leiden(
-            objective_function=objective, resolution_parameter=1.0
+            objective_function=objective_function, resolution_parameter=resolution
         )
         labels = cluster_obj.membership
         indices = np.arange(len(labels))

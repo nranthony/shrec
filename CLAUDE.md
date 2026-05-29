@@ -39,8 +39,10 @@ proper Python package with the public API at the top level:
 from shrec import RecurrenceClustering, RecurrenceManifold
 ```
 
-Test suite (`uv run pytest`): **39 passed, 2 skipped (`cdlib` in
-optional extra), 2 documented xfailed**.
+Test suite (`uv run pytest`): **66 passed, 6 skipped (optional
+`igraph`/`leidenalg`/`cdlib` backends), 2 documented xfailed**. The
+math-correctness catalog (`docs/tests-math.md`) now has all 14 "must"
+tests green or documented-xfail.
 
 The two xfails are tracked in `docs/tests-math.md`:
 
@@ -48,10 +50,15 @@ The two xfails are tracked in `docs/tests-math.md`:
   diverge on σ-solver conventions. The refactor chose
   `dataset_to_simplex` (paper-faithful, no umap dependency). Lifting
   the xfail requires reconciling the conventions.
-- **MM20** — period-4 Sauer-limit ARI ≈ 0.50: Leiden at default
-  `resolution=1.0` collapses to 2 communities. Closing this requires
-  Leiden resolution tuning or a CPM objective (graspologic's CPM
-  backend currently panics).
+- **MM20** — period-4 Sauer-limit ARI ≈ 0.50. **This is a
+  representational limit, not a Leiden-resolution artifact** (don't
+  chase resolution tuning — it's been ruled out). A modularity sweep
+  jumps 2 communities → ~1000 singletons with no stable 4-community
+  regime; an *oracle* spectral k-means=4 on the consensus Laplacian
+  also gives ARI≈0.5; the continuous `RecurrenceManifold` gives
+  Spearman |ρ|≈0.38. The four levels collapse into a low/high 2-way
+  split in the recurrence graph. Closing it needs a richer recurrence
+  representation. Pinned by `test_period_four_is_not_separable_in_graph`.
 
 ## Canonical SHREC pipeline (Appendix B)
 

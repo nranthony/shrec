@@ -70,12 +70,17 @@ class TestSauerLimitNearExactRecovery:
 
     @pytest.mark.xfail(
         reason=(
-            "Period-4 driver collapses to 2 Leiden communities at default "
-            "resolution=1.0, giving ARI ≈ 0.50 instead of the paper's "
-            "asymptotic ARI = 1. The canonical simplicial + Fiedler "
-            "refactor is correct; closing this gap requires Leiden "
-            "resolution tuning (or a different objective like CPM) and "
-            "is deferred to the post-modularisation tuning PR."
+            "Period-4 driver yields ARI ≈ 0.50 instead of the paper's "
+            "asymptotic ARI = 1. NOT a Leiden-resolution artifact: diagnosed "
+            "as representational (see test_period_four_is_not_separable_in_graph "
+            "below). A modularity-resolution sweep jumps straight from 2 "
+            "communities (res≤1) to ~1000 singletons (res≥2) with no stable "
+            "4-community regime; an *oracle* spectral k-means=4 on the consensus "
+            "Laplacian also only reaches ARI≈0.5 across N∈[20,100] and "
+            "coupling∈[0.5,1]; and the continuous RecurrenceManifold reaches "
+            "Spearman |ρ|≈0.38. The four levels {0.1,0.4,0.6,0.9} collapse into "
+            "a low/high 2-way split in the recurrence graph, so closing MM20 "
+            "needs a richer recurrence representation, not a clustering tweak."
         ),
         strict=True,
     )
@@ -92,4 +97,35 @@ class TestSauerLimitNearExactRecovery:
         ari = adjusted_rand_score(z, model.labels_)
         assert ari > 0.95, (
             f"Sauer-limit period-4 recovery: ARI = {ari:.4f} (expected > 0.95)."
+        )
+
+    def test_period_four_is_not_separable_in_graph(self):
+        """MM20 diagnosis (characterisation test) — pins *why* MM20 is xfail:
+        the period-4 structure is absent from the consensus graph, so even an
+        oracle spectral k-means into 4 clusters cannot recover it. If a future
+        change to the recurrence representation makes period-4 separable, this
+        test will start failing and flag that MM20's xfail should be revisited.
+        """
+        import scipy.linalg
+        from sklearn.cluster import KMeans
+
+        from shrec.recurrence import data_to_connectivity2
+
+        T = 1000
+        levels = np.array([0.1, 0.4, 0.6, 0.9])
+        z = levels[np.arange(T) % 4]
+        X = _logistic_ensemble(z, n_responses=20, coupling=0.5, seed=0)
+
+        model = RecurrenceClustering(random_state=1)
+        embedded = model._make_embedding(model._preprocess(X))
+        affinity = data_to_connectivity2(embedded, time_exclude=0)
+        laplacian = np.diag(affinity.sum(1)) - affinity
+        _, eigvecs = scipy.linalg.eigh(laplacian, subset_by_index=[1, 3])
+        oracle = KMeans(4, n_init=10, random_state=0).fit_predict(eigvecs)
+
+        ari = adjusted_rand_score(z, oracle)
+        assert ari < 0.6, (
+            f"Oracle spectral k-means=4 recovered period-4 with ARI={ari:.3f} "
+            "(≥ 0.6): the consensus graph now separates the four levels, so the "
+            "MM20 limitation may be representational no longer — revisit the xfail."
         )
