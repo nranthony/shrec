@@ -515,3 +515,56 @@ The paper claims accuracy grows and saturates with total data:
   general recipe: average over seeds, fit the claimed form, then assert its
   qualitative parameters + a baseline-beating goodness rather than a tight R².
   Distinguishes "the law holds" from "these particular numbers recurred."
+
+---
+
+# Round 6 — investigating MM20 (period-4), and a negative result that matters (2026-05-29)
+
+The remaining xfail MM20 (period-4 driver → ARI≈0.5) carried a hopeful note:
+"closing requires Leiden resolution tuning or CPM." Investigated it properly
+and the note was **wrong** — closing it requires neither, because the problem
+isn't in the clustering step at all. The investigation is a small case study in
+*localising a failure to the right stage of a pipeline*.
+
+The pipeline is: embed → per-channel recurrence → consensus graph → community
+detection. The ARI≈0.5 could live in any stage. Three probes pinned it:
+
+1. **Resolution sweep (blames the clustering objective).** Modularity at
+   res∈{0.5,1,2,4,…} jumps from 1 community (res 0.5) to 2 (res 1) straight to
+   ~1000 singletons (res 2) — there is no resolution that yields a stable 4.
+   So *if* the structure were present, modularity still couldn't tune to it —
+   but this alone doesn't prove the structure is absent.
+2. **Oracle spectral k-means=4 (bypasses Leiden entirely).** Take the consensus
+   Laplacian's top eigenvectors and k-means them into exactly 4 — the most
+   generous clustering possible. Still ARI≈0.5, robustly, across N∈[20,100] and
+   coupling∈[0.5,1]. This *removes* the clustering objective as the suspect:
+   the eigenvectors themselves don't carry a 4-way split.
+3. **Continuous reconstruction (bypasses clustering altogether).** The
+   RecurrenceManifold Fiedler vector vs the ordered driver gives Spearman
+   |ρ|≈0.38. Even treating period-4 as a continuous ordering problem fails.
+
+Conclusion: the four levels {0.1,0.4,0.6,0.9} collapse to a low/high **2-way**
+split *in the recurrence graph itself*. The information loss is upstream of
+clustering — in how binary recurrence (co-location in delay space) represents a
+4-level driver whose adjacent levels share recurrence basins. No clustering
+choice can recover what the graph doesn't encode.
+
+- **📚 LEARNING TOPIC — "Localising failure in a multi-stage pipeline."** The
+  general move: replace each downstream stage with an *oracle* (here, k-means
+  with the true k; the continuous embedding with no clustering) and see if the
+  metric recovers. The first oracle that *doesn't* rescue accuracy contains the
+  bottleneck. A clean, reusable debugging discipline worth its own page.
+- **📚 LEARNING TOPIC — "What binary recurrence can and cannot encode."** Why a
+  2-level (period-2) driver is recovered near-perfectly but a 4-level one
+  collapses: recurrence is an equivalence relation (same state ↔ edge), and it
+  resolves driver levels only as well as the responses' delay-embedded states
+  separate those levels. Adjacent levels with overlapping basins merge. This is
+  the conceptual heart of the method's resolution limit and pairs naturally with
+  the MM27 signal-to-noise story.
+- **Process lesson:** the codebase's xfail note encoded a *plausible but
+  untested* cause ("tune Leiden"). Investigating turned a guess into a measured
+  fact and saved the next person a fruitless tuning PR. The companion
+  characterisation test `test_period_four_is_not_separable_in_graph` now *pins*
+  the real cause, and will fire if a future representation change actually fixes
+  it. Encoding "why this is hard" as a passing test is as valuable as testing
+  "this works."
