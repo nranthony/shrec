@@ -444,3 +444,74 @@ difference" and hidden the whole point.
   where the "obvious" fix shows no benefit on the obvious test. It stops the
   next person re-litigating it and sharpens *why* the real effect is where it
   is (here: values, not labels; continuous driver, not discrete).
+
+---
+
+# Round 5 — the deferred must-tests MM6 & MM27 (2026-05-29)
+
+Closed the last two deferred "must" tests. With these, every must-test is green
+or a documented xfail — the algorithm is "green" by the catalog's own bar.
+
+## MM6 — the ensemble aggregation is a power-mean (and floats bite at the limit)
+
+`data_to_connectivity` aggregates per-channel kernels `a_i = exp(-surprise_i/thresh)`
+across the ensemble as
+
+    bd = (1/nb · Σ_i a_i**ord) ** (1/ord)   — a power-mean (generalised mean) M_ord.
+
+The two limits the classical baseline relies on fall straight out of power-mean
+theory: `M_1` = arithmetic mean; `M_∞` = max. Since `a_i = exp(-surprise_i/thresh)`,
+the max over channels is `exp(-(min_i surprise_i)/thresh)` — the *closest-channel*
+recurrence, which is exactly the Sauer `inf_k d^(k)` the `ClassicalRecurrenceClustering`
+approximates with `ord=500`.
+
+Two things worth teaching here:
+
+- **📚 LEARNING TOPIC — "Power means interpolate min↔mean↔max."** `M_{-∞}=min`,
+  `M_0=geometric mean`, `M_1=arithmetic`, `M_2=RMS`, `M_∞=max`, monotone in the
+  exponent. SHREC's `ord` is literally this knob: it dials the consensus from
+  "average channel" toward "most-recurrent channel." A single figure of `M_p`
+  vs `p` on a handful of values makes the whole classical-vs-canonical design
+  legible.
+- **📚 LEARNING TOPIC — "Why `ord=500` and not `∞`: floating-point reach."**
+  The L∞ limit is exact in real arithmetic but `a_i**500` *underflows to 0*
+  once `a_i ≲ 0.25` (since `0.25**500 ≈ 10^-301` nears the double floor). So at
+  the Sauer setting, low-affinity pairs collapse to 0 — harmless for a
+  thresholded graph, but it means the test can only check the max-limit on
+  well-conditioned (high-affinity) entries. Convergence is also only
+  `O(nb^{-1/ord})`, i.e. *slow*. Good worked example of "the math says ∞, the
+  hardware says ~500."
+
+## MM27 — a scaling law, and choosing a regime where the effect exists
+
+The paper claims accuracy grows and saturates with total data:
+`Acc(NT/τ) = Acc_max(1 − exp(−β√(NT/τ)))`. Reproducing it taught the most about
+*experiment design*, not code:
+
+1. **Pick the observable that can see the effect.** The catalog phrased MM27 in
+   discrete-ARI terms, but the period-4 ARI is capped at ≈0.5 by the Leiden
+   resolution collapse (MM20). Switching to the *continuous* driver
+   (RecurrenceManifold + Spearman |ρ|) gives a smooth accuracy in [0,1] that a
+   2-parameter curve can actually be fit to.
+2. **Pick a regime where more data helps.** With a clean continuous driver,
+   accuracy *already saturates at N=2* — flat curve, nothing to fit. The scaling
+   only appears when each response is mildly unreliable, so consensus across
+   responses buys something. Light observation noise (σ=0.05) is the sweet spot:
+   accuracy climbs 0.29 → 0.75 over N=2→8 then plateaus. σ=0.2 is *too* much —
+   it destroys the recurrence structure and accuracy collapses to ~0 for all N.
+   There's a genuine signal-to-noise window in which the law is visible.
+3. **Assert the claim, not the fit.** R² of the saturating form was ~0.77 —
+   good, but seed-dependent. The robust assertions are the *content* of the law:
+   β>0 (accuracy increases with NT/τ), Acc_max∈[0.6,1] (it works at saturation),
+   a clear small-N→large-N gain, and that the curve beats a flat-mean baseline
+   (R²>0.5). Pinning R²>0.9 would be a flaky test masquerading as a precise one.
+
+- **📚 LEARNING TOPIC — "Signal-to-noise windows in inference methods."** Plot
+  accuracy vs (noise σ, N) as a heatmap: too little noise → no N-dependence to
+  study; too much → no recovery at any N; a diagonal band where consensus pays
+  off. This is the percolation/“glass-like” story of the paper made concrete and
+  is probably the single most illuminating figure for a methods reader.
+- **📚 LEARNING TOPIC — "Testing a scaling law without overfitting it."** The
+  general recipe: average over seeds, fit the claimed form, then assert its
+  qualitative parameters + a baseline-beating goodness rather than a tight R².
+  Distinguishes "the law holds" from "these particular numbers recurred."

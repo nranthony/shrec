@@ -30,7 +30,7 @@ with inputs whose answers can be written down.
 | **MM3 (must)** | ✅ | Same — **diagonal**: `A_ii = 1` exactly (`d_ii=0 ⇒ exp(0)=1`, fuzzy union `1+1−1=1`). |
 | **MM4 (must)** | ✅ | `dataset_to_simplex` symmetrisation: `A + Aᵀ − A∘Aᵀ ∈ [0,1]^(N×N)` and symmetric. |
 | **MM5 (must)** | ⚠️ xfail | `dataset_to_simplex(X, k=M)` vs `umap.umap_.fuzzy_simplicial_set` agreement to `atol=1e-5`. Known divergence on σ-solver conventions; the refactor chose `dataset_to_simplex`. See `tests/test_recurrence_simplicial.py`. |
-| **MM6 (must)** | ⏳ | `recurrence/kernel.py:data_to_connectivity` p-norm limits: ord=1 → mean; ord→∞ → min-over-channels. |
+| **MM6 (must)** | ✅ | `recurrence/kernel.py:data_to_connectivity` p-norm limits: the ensemble aggregation is a power-mean `(mean_i a_i**ord)**(1/ord)` of per-channel kernels — `ord=1` → arithmetic mean; `ord→∞` → elementwise max = min-over-channels (Sauer `inf_k`). L∞ limit verified on well-conditioned entries (small affinities underflow at high ord). See `tests/test_recurrence_kernel.py`. |
 | MM7 | ⏳ | `cdist` isometry invariance under random orthogonal `Q` + translation. |
 | MM8 | ⏳ | `cdist` triangle inequality on random triples. |
 | MM9 | ⏳ | `sparsify_by_quantile` produces ≥ target sparsity; idempotent at the same threshold. |
@@ -83,7 +83,7 @@ Slower; intended for `-m slow` / nightly CI.
 
 | Test | Status | Claim |
 |------|--------|-------|
-| **MM27 (must)** | ⏳ | β-distribution accuracy scaling (Appendix E.2): `Acc(NT/τ) = Acc_max (1 − exp(−β √(NT/τ)))`. Fit form to ARI vs N sweep on period-4 logistic ensemble. |
+| **MM27 (must)** | ✅ (slow) | β-accuracy scaling (Appendix E.2): `Acc(NT/τ) = Acc_max (1 − exp(−β √(NT/τ)))`. Fit to a Spearman-accuracy-vs-N sweep on a lightly-noised (σ=0.05) continuous-driver logistic ensemble via `RecurrenceManifold` (the continuous path sidesteps the MM20 discrete-ARI collapse and is smooth to fit). Asserts β>0, Acc_max∈[0.6,1], clear small-N→large-N gain, and that the form beats a flat baseline (R²>0.5). See `tests/test_scaling_laws.py`. |
 | MM28 | ⏳ | Percolation order parameter (Appendix E.3): `T_LCC/T` monotone non-increasing in N with a > 0.3 drop. |
 | MM29 | ⏳ | HN-Isomap baseline: `common_neighbors_ratio` is symmetric, zero-diagonal, non-negative. |
 
@@ -106,12 +106,12 @@ Cheap mechanical pinning.
 
 | Section | Total | Green | xfail | Deferred |
 |---------|-------|-------|-------|----------|
-| §5b.1 inner math      | 13 | 7 | 1 | 5  |
+| §5b.1 inner math      | 13 | 8 | 1 | 4  |
 | §5b.2 invariances     | 6  | 3 | 0 | 3  |
 | §5b.3 limiting cases  | 10 | 4 | 1 | 5  |
-| §5b.4 scaling laws    | 3  | 0 | 0 | 3  |
+| §5b.4 scaling laws    | 3  | 1 | 0 | 2  |
 | §5b.5 sklearn contract| 4  | 4 | 0 | 0  |
-| **total**             | 36 | 18 | 2 | 16 |
+| **total**             | 36 | 20 | 2 | 14 |
 
 MM1, MM3 and MM4 also have **Hypothesis property-based** generalisations
 (`TestSimplexInvariantsPropertyBased`) that assert the invariants over
@@ -119,13 +119,14 @@ machine-generated clouds and independently rediscover the tied-neighbourhood
 σ-degeneracy.
 
 The "must" tests (MM1–MM6, MM10, MM13–MM14, MM19–MM22, MM27, MM33) are
-the minimum to call the algorithm green. Of the 14 must-tests, **10 are
-green, 2 are xfail-documented, and 2 are still deferred**. The inner-
-math closed-form checks MM1–MM4 are now green (and MM1 surfaced and
-fixed the `fsolve` σ-solve stall); MM10 (backend agreement) and MM33
-(connectivity guard) landed alongside the igraph-`resolution` and
-disconnected-graph fixes. The remaining must-gaps are the consensus /
-kernel p-norm-limit check MM6 and the paper-figure regression MM27.
+the minimum to call the algorithm green. Of the 14 must-tests, **12 are
+green and 2 are xfail-documented — none are deferred**. The inner-math
+closed-form checks MM1–MM4 are green (MM1 surfaced and fixed the `fsolve`
+σ-solve stall); MM10 (backend agreement) and MM33 (connectivity guard)
+landed alongside the igraph-`resolution` and disconnected-graph fixes;
+MM6 (kernel p-norm limits) and MM27 (accuracy scaling law) close the set.
+The only open must-items are the two documented xfails: MM5 (umap σ-solver
+convention) and MM20 (period-4 Leiden resolution collapse).
 
 The deferred items are the natural next batch of work whenever the
 math-correctness suite is revisited.
