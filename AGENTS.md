@@ -62,10 +62,12 @@ proper Python package with the public API at the top level:
 from shrec import RecurrenceClustering, RecurrenceManifold
 ```
 
-Test suite (`uv run pytest`): **177 passed, 6 skipped (optional
-`igraph`/`leidenalg`/`cdlib` backends), 1 documented xfailed** — this
-includes 5 `@slow` tests (MM21, MM27, MM28, and MM41's two combo-recovery
-checks); `uv run pytest -m "not slow"` skips them (172 passed). The
+Test suite (`uv run pytest`): **184 passed, 9 skipped (optional
+`igraph`/`leidenalg`/`cdlib` backends, `matplotlib`, `umap`), 1 documented
+xfailed** on the 2026-10-27 lock (CPython 3.13, numpy 2, Leiden via
+graspologic-native — ADR-0010) — this includes 5 `@slow` tests (MM21, MM27,
+MM28, and MM41's two combo-recovery checks); `uv run pytest -m "not slow"`
+skips them (179 passed, host run 2026-10-27). The
 math-correctness catalog (`docs/tests-math.md`) is **fully closed**: all
 41 `MM<n>` oracles are green except the single documented MM20 xfail
 (40 green / 1 xfail / 0 deferred). The 2026-06 follow-up batches closed

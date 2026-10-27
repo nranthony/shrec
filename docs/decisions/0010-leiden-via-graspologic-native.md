@@ -1,6 +1,8 @@
 # 0010 — Leiden backend: call graspologic-native directly, drop graspologic
 
-**Status:** applied · **Date:** 2026-10-27
+**Status:** applied; host-proved 2026-10-27 (`uv lock --upgrade`, CPython 3.13,
+numpy 2, graspologic-native 1.3.1: 179 passed, 9 skipped, 1 xfailed, `-m "not slow"`) ·
+**Date:** 2026-10-27
 
 ## Context
 
