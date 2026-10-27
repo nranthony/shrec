@@ -57,7 +57,7 @@ Dependencies
 
 Additional dependencies only necessary for discrete drivers
 + networkx (necessary for learning discrete drivers only)
-+ graspologic (necessary for learning discrete drivers only)
++ graspologic-native (Leiden; necessary for learning discrete drivers only)
 
 Additional dependencies for certain demonstrations
 + matplotlib 

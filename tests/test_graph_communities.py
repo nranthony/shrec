@@ -1,14 +1,18 @@
 """Regression tests for the Leiden community-detection adapter (`_leiden`).
 
 Tied to docs/history/2026-05-refactor-assessment.md §3A bugs A4 (deprecated NetworkX API) and A8
-(missing else branch on the method dispatch).
+(missing else branch on the method dispatch), and docs/decisions/0010 (the default backend
+is graspologic-native called directly; method name unchanged).
 """
+import sys
+
 import numpy as np
 import pytest
 import scipy.sparse as sp
 
 from sklearn.metrics import adjusted_rand_score
 
+from shrec.graph.communities import _adjacency_to_edge_list
 from shrec.models.models import _leiden
 
 
@@ -43,10 +47,10 @@ class TestLeidenUnknownMethod:
             _leiden(A, method="not-a-real-method")
 
     def test_known_methods_dispatch_without_error(self):
-        """At least one supported backend (graspologic) is a hard dependency
-        per pyproject.toml, so it must work."""
+        """At least one supported backend (graspologic-native, method
+        "graspologic") is a hard dependency per pyproject.toml, so it must work."""
         A = _barbell_adjacency(n=5)
-        # graspologic requires random_seed to be a *positive* integer (or None)
+        # the native core requires the seed to be a *positive* integer (or None)
         indices, labels = _leiden(A, method="graspologic", random_state=1)
         assert len(indices) == A.shape[0]
         assert len(labels) == A.shape[0]
@@ -88,7 +92,7 @@ class TestLeidenBackendAgreement:
     barbell has an unambiguous community structure, so backend-specific
     defaults (RNG, tie-breaking) should not change the answer.
 
-    graspologic is a hard dependency so its leg always runs; igraph /
+    graspologic-native is a hard dependency so its leg always runs; igraph /
     leidenalg / cdlib are gated by `importorskip` and only run under the
     optional extra.
     """
@@ -105,6 +109,64 @@ class TestLeidenBackendAgreement:
         _, ref = _leiden(A, method="graspologic", random_state=1)
         _, other = _leiden(A.astype(float), method=method)
         assert adjusted_rand_score(ref, other) == 1.0
+
+
+class TestNativeBackend:
+    """docs/decisions/0010 — the default leg calls `graspologic_native.leiden`
+    itself; the pure-Python `graspologic` package (numpy<2) is gone. These pin
+    the behaviours the old wrapper gave us for free.
+    """
+
+    def test_runs_without_graspologic_importable(self, monkeypatch):
+        # `None` in sys.modules makes `import graspologic` raise ImportError.
+        monkeypatch.setitem(sys.modules, "graspologic", None)
+        A = _barbell_adjacency(n=6)
+        _, labels = _leiden(A, method="graspologic", random_state=1)
+        assert adjusted_rand_score(_barbell_ground_truth(6), labels) == 1.0
+
+    def test_edge_list_is_upper_triangle_row_major(self):
+        A = np.array([[0, 2, 0], [2, 0, 1], [0, 1, 3]], dtype=float)
+        n, edges = _adjacency_to_edge_list(A)
+        assert n == 3
+        assert edges == [("0", "1", 2.0), ("1", "2", 1.0), ("2", "2", 3.0)]
+        n_sp, edges_sp = _adjacency_to_edge_list(sp.csr_matrix(A))
+        assert (n_sp, edges_sp) == (n, edges)
+
+    def test_dense_and_sparse_agree(self):
+        A = _barbell_adjacency(n=6).astype(float)
+        _, dense = _leiden(A, method="graspologic", random_state=1)
+        _, sparse = _leiden(sp.csr_matrix(A), method="graspologic", random_state=1)
+        assert adjusted_rand_score(dense, sparse) == 1.0
+
+    def test_directed_input_is_rejected(self):
+        A = _barbell_adjacency(n=4).astype(float)
+        A[0, 1] = 0.5  # breaks symmetry
+        with pytest.raises(ValueError, match="undirected"):
+            _leiden(A, method="graspologic", random_state=1)
+
+    @pytest.mark.parametrize("seed", [0, -1, 1.5])
+    def test_non_positive_or_fractional_seed_is_rejected(self, seed):
+        A = _barbell_adjacency(n=4)
+        with pytest.raises(ValueError, match="positive integer"):
+            _leiden(A, method="graspologic", random_state=seed)
+
+    def test_isolates_are_omitted_with_a_warning(self):
+        A = _barbell_adjacency(n=4)
+        N = A.shape[0]
+        B = np.zeros((N + 1, N + 1), dtype=int)
+        B[:N, :N] = A  # node N has no edges
+        with pytest.warns(UserWarning, match="isolate"):
+            indices, labels = _leiden(B, method="graspologic", random_state=1)
+        assert len(indices) == N and N not in indices
+        assert len(labels) == N
+
+    def test_cpm_resolution_is_forwarded(self):
+        A = _barbell_adjacency(n=6).astype(float)
+        _, coarse = _leiden(A, method="graspologic", objective="cpm", resolution=0.01,
+                            random_state=1)
+        _, fine = _leiden(A, method="graspologic", objective="cpm", resolution=2.0,
+                          random_state=1)
+        assert len(np.unique(fine)) > len(np.unique(coarse))
 
 
 class TestIgraphResolutionForwarded:

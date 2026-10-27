@@ -24,7 +24,7 @@ import warnings
 import numpy as np
 import pytest
 
-graspologic = pytest.importorskip("graspologic")
+graspologic_native = pytest.importorskip("graspologic_native")
 
 from scipy.stats import spearmanr
 from sklearn.metrics import adjusted_rand_score

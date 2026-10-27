@@ -24,6 +24,7 @@ decision → status). Numbered, never renumbered.
 | [0007](0007-overall-verdict.md) | Overall verdict: the suite tests the right math | accepted |
 | [0008](0008-pipeline-modularization.md) | Pipeline modularization: stage strategies + preset models | **done** |
 | [0009](0009-pipeline-combo-coverage.md) | Coverage plan for the composable pipeline (tests/benchmarks/examples) | **executed** |
+| [0010](0010-leiden-via-graspologic-native.md) | Leiden backend: call graspologic-native directly, drop graspologic (numpy<2 pin) | **applied** |
 
 ## One-paragraph summary
 
