@@ -40,10 +40,18 @@ PDF page 11.
 
 ## Where to look
 
-- `docs/architecture.md` — paper-to-code mapping, current sub-package
-  layout, and the design decisions fixed by the 2026-05 refactor
-  (Fiedler vs SVD, simplicial vs exp kernel, RNG plumbing, etc.).
-  **Read this first** before changing algorithm code.
+- [`DECISIONS.md`](DECISIONS.md) — decisions still in force, one line each,
+  in two layers. An **invariant** (paper fidelity, the Leiden backend, the
+  back-compat shims, the RNG and sklearn contracts) is not broken without
+  asking first, and names the test that enforces it. A **current choice**
+  gives way to the code: edit or delete its line in the same commit.
+  **Check it before changing algorithm code.**
+- `docs/architecture.md` — paper-to-code mapping, stage composition and
+  sub-package layout, and where to add new behaviour.
+- [`work/`](work/README.md) — numbered plans and proposals in flight; a closed
+  item leaves one row in [`work/LEDGER.md`](work/LEDGER.md). Check the ledger
+  before proposing an approach.
+- [`BACKLOG.md`](BACKLOG.md) — wanted but not yet examined, one line each.
 - `docs/tests-math.md` — live catalog of math-correctness oracles
   (`MM<n>` ids). Every new math-test should claim a fresh MM id and
   update this file.
@@ -143,11 +151,15 @@ src/shrec/
 benchmarks/                 # driver-response synthetic systems (+ pipeline_combo_sweep.py)
 examples/                   # runnable quickstart + pipeline-composition scripts
 tests/                      # pytest suite
-docs/                       # architecture / tests-math / history / decisions / paper
+docs/                       # architecture / tests-math / history / paper
+scripts/                    # refs.py (dead-reference check) + its tests
+work/                       # plans in flight, LEDGER.md, inbox/
+DECISIONS.md                # decisions still in force
+BACKLOG.md                  # wanted, unexamined
 ```
 
-The pipeline is **composed from stage strategies** (decision
-`docs/decisions/0008`): the four named models are presets over
+The pipeline is **composed from stage strategies** (decision 0008 in
+`DECISIONS.md`): the four named models are presets over
 `ShrecPipeline`, so any (connectivity × reconstructor) combination is a
 one-line `ShrecPipeline(connectivity=…, reconstructor=…)`. Old import paths
 (`from shrec.models.models import …`, `from shrec.utils import …`) continue
@@ -161,6 +173,8 @@ The suite is **pytest**. Run from the repo root:
 uv run pytest                 # everything
 uv run pytest tests/test_preprocessing.py -v
 uv run pytest -m "not slow"   # skip the math-correctness sweeps
+python3 scripts/refs.py       # every referenced path exists; run before and after a deletion
+python3 scripts/refs_test.py  # the check's own tests
 ```
 
 Conventions:
@@ -190,9 +204,12 @@ should not extend it.
 - Random state: always plumb a local
   `np.random.default_rng(self.random_state)`. Never call
   `np.random.seed(...)` (audit item A6, fixed in the refactor;
-  reintroducing it would silently mutate global state).
+  reintroducing it would silently mutate global state; decision 0015).
 - `fit(X, y=None)` returning `self` is the contract for every model.
-  Per-call kwargs belong on `__init__`.
+  Per-call kwargs belong on `__init__` (decision 0016).
+- The existing shims in `shrec.models.models` and `shrec.utils` are
+  protected by decision 0011: the rule against *adding* shims is not
+  licence to remove these.
 - When changing the algorithm, cite the paper section
   (e.g. "per Appendix B, eq. B3") in the commit message.
 
@@ -211,9 +228,9 @@ The paper PDF is large; `pypdf` is in the dev deps so
 
 ## When in doubt
 
-1. Re-read the relevant section of `docs/architecture.md` for the
-   canonical layout / design decisions, and `docs/tests-math.md`
-   for the test catalog.
+1. Re-read `DECISIONS.md` for what constrains the area, the relevant
+   section of `docs/architecture.md` for the canonical layout, and
+   `docs/tests-math.md` for the test catalog.
 2. Check the paper's Appendix B for the canonical algorithm step.
 3. Add the regression test before the fix; let it fail, then make it
    pass. Cite a `MM<n>` id (claim a new one if needed) and update

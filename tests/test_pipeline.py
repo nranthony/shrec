@@ -1,4 +1,4 @@
-"""Tests for the composable pipeline (docs/decisions/0008, plan 0009).
+"""Tests for the composable pipeline (decision 0008 in DECISIONS.md, plan 0009).
 
 Covers the new public surface the stage-strategy refactor introduced:
 

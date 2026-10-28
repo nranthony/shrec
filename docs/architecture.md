@@ -60,7 +60,7 @@ Two baselines also live in the repo:
 |-----------------------------------------|------------------------------------------------------------------------------------------------|
 | Time-delay embedding                    | `embeddings.py:embed_ts` / `hankel_matrix`; `models/base.py:RecurrenceModel._make_embedding`    |
 | Pairwise distance                       | `cdist(...)` inside `recurrence/simplicial.py` and `recurrence/kernel.py`                       |
-| ρ/σ root-find + simplicial complex      | `recurrence/simplicial.py:dataset_to_simplex` (canonical, self-contained `fsolve` impl)         |
+| ρ/σ root-find + simplicial complex      | `recurrence/simplicial.py:dataset_to_simplex` (canonical, self-contained `brentq` impl)         |
 | Consensus aggregation                   | `recurrence/consensus.py:data_to_connectivity2` (mean over per-response simplicial outputs)     |
 | Exp-kernel recurrence (baseline only)   | `recurrence/kernel.py:data_to_connectivity` — used by `ClassicalRecurrenceClustering` only      |
 | Discrete driver (Leiden)                | `reconstruct.py:LeidenReconstructor` (→ `graph/communities.py:_leiden`)                          |
@@ -102,37 +102,11 @@ Sub-packages still available for advanced use:
 
 ## 3. Design decisions
 
-These are the canonical choices fixed by the 2026-05 refactor.
-See `docs/history/2026-05-refactor-assessment.md` for the reasoning
-trail.
-
-- **Fiedler eigenvector over TruncatedSVD.** `RecurrenceManifold`
-  computes the smallest non-zero eigenvector of `L = D − A` via
-  `scipy.linalg.eigh`. The earlier `TruncatedSVD(A).components_[1]`
-  only coincides with the Fiedler vector for regular graphs; oracle
-  MM22 pins the canonical choice.
-- **Simplicial complex over exp kernel.** `RecurrenceClustering` and
-  `RecurrenceManifold` build their consensus affinity via the
-  per-response adaptive fuzzy simplicial complex
-  (`data_to_connectivity2`). The fixed-σ exp-kernel
-  (`data_to_connectivity`) is retained for the Sauer baseline only.
-  Oracles MM19, MM20 motivate the switch.
-- **One simplicial implementation.** `dataset_to_simplex` is the
-  canonical implementation; the umap-based variant in the old
-  `data_to_connectivity2` was dropped and `umap-learn` is no longer a
-  core dependency. Reconciling the two σ-solver conventions (MM5) is
-  an open follow-up.
-- **`np.random.Generator`, not `np.random.seed`.** No model constructor
-  or `fit` ever mutates the global numpy RNG. Noise injection uses a
-  local `np.random.default_rng(self.random_state)`. MM18 pins this.
-- **`fit(X, y=None)` returning `self`.** All four models follow the
-  sklearn contract: behavioural knobs live on `__init__`,
-  `fit` is nullary, and returns `self` for chaining. MM30 pins
-  `get_params`/`set_params` round-trip.
-- **Vectorised `common_neighbors_ratio`.** Replaces an O(T²·k)
-  Python double-loop with the boolean-adjacency matmul
-  `(A @ Aᵀ) / (k_i + k_j − A @ Aᵀ)`. MM12 pins parity with the
-  legacy implementation.
+The canonical algorithm choices are lines in [`DECISIONS.md`](../DECISIONS.md):
+Fiedler over SVD (0012), the simplicial default stage (0013), one simplicial
+implementation (0014), the local RNG (0015) and the sklearn contract (0016),
+beside the paper-fidelity invariants (0002–0004). The reasoning trail is in
+`docs/history/2026-05-refactor-assessment.md`.
 
 ---
 

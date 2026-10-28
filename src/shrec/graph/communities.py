@@ -5,8 +5,8 @@ cdlib if installed. Backends are imported lazily so the core library is
 usable without optional packages.
 
 The default backend is the Rust core that `graspologic.partition.leiden`
-wraps, called directly (docs/decisions/0010). The method keeps the name
-``"graspologic"`` so callers and saved configs need no change; the pure-Python
+wraps, called directly (the Leiden backend line, 0010, in DECISIONS.md). The
+method keeps the name ``"graspologic"`` so callers and saved configs need no change; the pure-Python
 `graspologic` package is no longer required or imported.
 """
 import warnings

@@ -68,7 +68,7 @@ class TestFiedlerEigenvectorOracle:
         # Feed the precomputed affinity straight into the spectral step via the
         # pipeline's injection seam (`PrecomputedConnectivity`), so this oracle
         # exercises the real `FiedlerReconstructor` without the recurrence
-        # machinery. See docs/decisions/0008.
+        # machinery. See the stage-strategy pipeline line (0008) in DECISIONS.md.
         pred = _fiedler_from_affinity(A, n_components=1).squeeze()
         pred = pred / (np.linalg.norm(pred) + 1e-12)
 
