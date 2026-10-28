@@ -55,7 +55,7 @@ def dataset_to_simplex(X, k=20, tol=1e-12, precomputed=False, metric="euclidean"
         X (np.ndarray): dataset of shape (n_samples, n_features) or, if
             ``precomputed=True``, a precomputed (n, n) distance matrix.
         k (int): number of nearest neighbours used in the σ root-solve.
-        tol (float): tolerance passed to `scipy.optimize.fsolve`.
+        tol (float): brentq absolute tolerance on σ, passed to `fit_rho_sigma`.
         precomputed (bool): treat ``X`` as a distance matrix.
         metric (str): any metric accepted by
             `scipy.spatial.distance.cdist` (ignored when ``precomputed``).

@@ -23,6 +23,10 @@ DynamicalComponentsAnalysis/
 ### Remove DS STORE
 .DS_Store
 
+### Machine-local overrides, never shared ###
+*.local
+*.local.*
+
 ### uv / virtualenv ###
 .venv/
 
