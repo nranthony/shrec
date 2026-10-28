@@ -37,7 +37,6 @@ ROOT = Path(__file__).resolve().parent.parent
 # from the repo root, with its reason beside it.
 SKIP_PREFIXES: tuple[str, ...] = (
     "docs/spbuild/",      # generated Sphinx output
-    "docs/decisions/",    # awaiting deletion; its lines are in DECISIONS.md
 )
 
 # Top-level directories of this repo. A path-shaped string in a comment is only

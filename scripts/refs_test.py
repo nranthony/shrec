@@ -239,8 +239,8 @@ class ThisRepo(unittest.TestCase):
         self.assertEqual(len(tokens("See `docs/decisions/0008-x.md`.", "src/shrec/x.py")), 1)
         self.assertEqual(tokens("under `docs/decisions/`", "DECISIONS.md"), [])
 
-    def test_generated_and_retiring_trees_are_skipped(self):
-        every = ["docs/spbuild/html/index.html", "docs/decisions/0001-x.md", "src/a.py"]
+    def test_generated_tree_is_skipped(self):
+        every = ["docs/spbuild/html/index.html", "src/a.py"]
         self.assertEqual(refs.tracked(every), ["src/a.py"])
 
 
