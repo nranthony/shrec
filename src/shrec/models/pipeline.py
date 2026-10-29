@@ -19,7 +19,7 @@ Power users compose stages directly::
         reconstructor=UnionFindReconstructor(),
     ).fit(X)
 
-See `docs/decisions/0008-pipeline-modularization.md`.
+See the stage-strategy pipeline line (0008) in `DECISIONS.md`.
 """
 import numpy as np
 

@@ -2,7 +2,7 @@
 
 Working notes captured before the first PyPI release. Not a public changelog;
 this is the punch-list for *getting* to a release. Once `0.2.0` ships, the
-relevant parts of this file get promoted into `CHANGELOG.md` / the README and
+relevant parts of this file get promoted into a CHANGELOG / the README and
 the rest is deleted.
 
 ## Status today (2026-05-23)

@@ -26,7 +26,7 @@ viz = ["matplotlib", "seaborn"]
 notebook = ["jupyterlab", "ipykernel", "ipywidgets"]
 graph-extras = ["leidenalg", "python-igraph", "cdlib"]
 bio = ["scanpy"]
-sim = ["umap-learn"]  # legacy fuzzy-simplicial impl in shrec.recurrence
+sim = ["umap-learn"]  # reference fuzzy_simplicial_set for the MM5 parity tests only
 all = [
     "matplotlib",
     "seaborn",

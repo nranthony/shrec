@@ -6,7 +6,7 @@ steps 2–4): it turns the embedded response ensemble `(N, T, D)` into a single
 choose *how* recurrences are built and aggregated, independent of *how* the
 driver is then reconstructed from `A` (see `shrec.reconstruct`).
 
-See `docs/decisions/0008-pipeline-modularization.md`.
+See the stage-strategy pipeline line (0008) in `DECISIONS.md`.
 """
 from abc import ABC, abstractmethod
 

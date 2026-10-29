@@ -7,7 +7,7 @@ a continuous coordinate (Fiedler eigenvector / Isomap embedding). Swapping the
 reconstructor is independent of how `A` was built (see
 `shrec.recurrence.connectivity`).
 
-See `docs/decisions/0008-pipeline-modularization.md`.
+See the stage-strategy pipeline line (0008) in `DECISIONS.md`.
 """
 import warnings
 from abc import ABC, abstractmethod

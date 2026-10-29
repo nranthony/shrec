@@ -16,6 +16,15 @@ Status legend:
   failure is a known property of the current code, not a regression.
 - ⏳ **deferred** — not yet implemented; tracked here for future work.
 
+## Contents
+
+- [§5b.1 — Closed-form unit tests of the inner math](#5b1--closed-form-unit-tests-of-the-inner-math)
+- [§5b.2 — Algorithmic invariances and equivariances](#5b2--algorithmic-invariances-and-equivariances)
+- [§5b.3 — Limiting-case oracles (closed-form ground truth)](#5b3--limiting-case-oracles-closed-form-ground-truth)
+- [§5b.4 — Paper-claim regression tests (quantitative scaling laws)](#5b4--paper-claim-regression-tests-quantitative-scaling-laws)
+- [§5b.5 — Sklearn-contract tests](#5b5--sklearn-contract-tests)
+- [Coverage summary](#coverage-summary)
+
 ---
 
 ## §5b.1 — Closed-form unit tests of the inner math
@@ -88,7 +97,7 @@ Slower; intended for `-m slow` / nightly CI.
 | Test | Status | Claim |
 |------|--------|-------|
 | **MM27 (must)** | ✅ (slow) | β-accuracy scaling (Appendix E.2): `Acc(NT/τ) = Acc_max (1 − exp(−β √(NT/τ)))`. Fit to a Spearman-accuracy-vs-N sweep on a lightly-noised (σ=0.05) continuous-driver logistic ensemble via `RecurrenceManifold` (the continuous path sidesteps the MM20 discrete-ARI collapse and is smooth to fit). Asserts β>0, Acc_max∈[0.6,1], clear small-N→large-N gain, and that the form beats a flat baseline (R²>0.5). See `tests/test_scaling_laws.py`. |
-| MM28 | ✅ (slow) | Percolation order parameter (Appendix E.3): `T_LCC/T` (largest-connected-component fraction of the consensus graph A) is monotone non-increasing in N — "percolation loss precedes accurate reconstruction" (Fig 6). Reproduced on the **simplicial consensus** (the paper's A, not the Sauer graph) at an **absolute** edge threshold (a *quantile* threshold re-percolates as the weight distribution shifts with N) in the **weak-coupling** regime (κ=0.1, so single responses are individually ambiguous and consensus does the resolving — strong coupling is N-invariant). Seed-averaged (10) curve: 0.85 → 0.27, Spearman(N, LCC) = −1.0; asserts Spearman < −0.8 and drop > 0.3. See `tests/test_scaling_laws.py` and Round 12 of `docs/math-learning-notes.md`. |
+| MM28 | ✅ (slow) | Percolation order parameter (Appendix E.3): `T_LCC/T` (largest-connected-component fraction of the consensus graph A) is monotone non-increasing in N — "percolation loss precedes accurate reconstruction" (Fig 6). Reproduced on the **simplicial consensus** (the paper's A, not the Sauer graph) at an **absolute** edge threshold (a *quantile* threshold re-percolates as the weight distribution shifts with N) in the **weak-coupling** regime (κ=0.1, so single responses are individually ambiguous and consensus does the resolving — strong coupling is N-invariant). Seed-averaged (10) curve: 0.85 → 0.27, Spearman(N, LCC) = −1.0; asserts Spearman < −0.8 and drop > 0.3. The paper prints the order parameter, not how it scales with N: the direction is read off Fig 6 and the thresholds are calibrated on this construction, so weight it below the closed-form oracles. See `tests/test_scaling_laws.py` and Round 12 of `docs/math-learning-notes.md`. |
 | MM29 | ✅ | HN-Isomap baseline: the consensus similarity `HirataNomuraIsomap` feeds Isomap (`metric='precomputed'`) is a valid dissimilarity — symmetric, zero-diagonal, non-negative, ≤1 — and `fit` yields a finite `(T, n_components)` embedding. (Element-wise `common_neighbors_ratio` correctness is MM12.) See `tests/test_models_hirata_nomura.py`. |
 
 ---

@@ -9,6 +9,26 @@
 > Convention: a bullet tagged **📚 LEARNING TOPIC** is a candidate Quarto
 > page/section. Everything else is context for why it's interesting.
 
+**About this file.** A dated journal, chronological and append-only: earlier
+rounds are left as written. Tests and `docs/tests-math.md` cite it by round
+number ("see Round 11"). The curated version is the "Understanding the Math"
+explainer in `quarto-spike/explainer.qmd`.
+
+Rounds:
+
+- [Round 1 — the fuzzy simplicial complex and the σ root-solve (2026-05-28)](#the-object-under-test-the-fuzzy-simplicial-complex-appendix-b-step-3)
+- [Round 2 — devising parallel & perpendicular tests (2026-05-28)](#round-2--devising-parallel--perpendicular-tests-2026-05-28)
+- [Round 3 — theory deep-dives (2026-05-29)](#round-3--theory-deep-dives-2026-05-29)
+- [Round 4 — closing the survey items (2026-05-29)](#round-4--closing-the-survey-items-2026-05-29)
+- [Round 5 — the deferred must-tests MM6 & MM27 (2026-05-29)](#round-5--the-deferred-must-tests-mm6--mm27-2026-05-29)
+- [Round 6 — investigating MM20 (period-4) (2026-05-29)](#round-6--investigating-mm20-period-4-and-a-negative-result-that-matters-2026-05-29)
+- [Round 7 — closing the closed-form inner math: MM7, MM8, MM9, MM11 (2026-06-01)](#round-7--closing-the-closed-form-inner-math-mm7-mm8-mm9-mm11-2026-06-01)
+- [Round 8 — closing the pipeline invariances: MM15, MM16, MM17 (2026-06-01)](#round-8--closing-the-pipeline-invariances-mm15-mm16-mm17-2026-06-01)
+- [Round 9 — driver recovery and the science oracles: MM23, MM24-26, MM21 (2026-06-01)](#round-9--driver-recovery-and-the-science-oracles-mm23-mm24-26-mm21-2026-06-01)
+- [Round 10 — the baseline and a percolation dead-end (2026-06-01)](#round-10--the-baseline-and-a-percolation-dead-end-worth-recording-2026-06-01)
+- [Round 11 — MM5, a parity test that found a real bug (2026-06-02)](#round-11--mm5-a-parity-test-that-found-a-real-bug-and-how-to-be-certain-2026-06-02)
+- [Round 12 — MM28 percolation (2026-06-02)](#round-12--mm28-percolation-and-reading-the-spec-carefully-the-second-time-2026-06-02)
+
 ---
 
 ## The object under test: the fuzzy simplicial complex (Appendix B, step 3)

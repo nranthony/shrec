@@ -1,7 +1,8 @@
 """Regression tests for the Leiden community-detection adapter (`_leiden`).
 
 Tied to docs/history/2026-05-refactor-assessment.md §3A bugs A4 (deprecated NetworkX API) and A8
-(missing else branch on the method dispatch), and docs/decisions/0010 (the default backend
+(missing else branch on the method dispatch), and the Leiden backend line (0010) in
+DECISIONS.md (the default backend
 is graspologic-native called directly; method name unchanged).
 """
 import sys
@@ -112,7 +113,7 @@ class TestLeidenBackendAgreement:
 
 
 class TestNativeBackend:
-    """docs/decisions/0010 — the default leg calls `graspologic_native.leiden`
+    """Leiden backend (0010 in DECISIONS.md) — the default leg calls `graspologic_native.leiden`
     itself; the pure-Python `graspologic` package (numpy<2) is gone. These pin
     the behaviours the old wrapper gave us for free.
     """
