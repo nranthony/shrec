@@ -70,7 +70,7 @@ proper Python package with the public API at the top level:
 from shrec import RecurrenceClustering, RecurrenceManifold
 ```
 
-Test suite (`uv run pytest -m "not slow"`): **185 passed, 9 skipped (optional
+Test suite (`uv run pytest -m "not slow"`): **187 passed, 9 skipped (optional
 `igraph`/`leidenalg`/`cdlib` backends, `matplotlib`, `umap`), 1 documented
 xfailed** on the 2026-10-27 lock (CPython 3.13, numpy 2, Leiden via
 graspologic-native — ADR-0010). The 5 `@slow` tests (MM21, MM27, MM28, and
