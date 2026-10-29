@@ -2,8 +2,8 @@
 """Every path this repo refers to must exist.
 
 Run `python3 scripts/refs.py` and `python3 scripts/refs_test.py` before and after
-any deletion; the repo has no CI gate, and pytest's `testpaths` is `tests/` only,
-so neither runs on its own. stdlib only.
+any deletion. The repo has no CI; `tests/test_refs.py` runs both, so `uv run
+pytest` is the gate. stdlib only.
 
 Six checks over the files git knows about (`git ls-files`: committed or
 staged). An untracked new file is not checked until it is `git add`ed.

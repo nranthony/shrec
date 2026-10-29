@@ -27,11 +27,8 @@ Install `uv` if you don't already have it (see the [uv install docs](https://doc
 	cd shrec
 	uv sync
 
-This creates a `.venv/` in the project root with all dependencies from `pyproject.toml` installed. Activate it with:
-
-	source .venv/bin/activate
-
-Or run commands directly through uv without activating:
+This creates the project environment with every dependency from `uv.lock`, on the
+Python named in `.python-version`. Run commands through uv; there is nothing to activate:
 
 	uv run pytest
 	uv run jupyter lab
