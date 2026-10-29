@@ -1,0 +1,15 @@
+# 2026-08-03: opt out of the sandbox's wheels-only default.
+#
+# The sandbox sets `no-build = true` in /etc/uv/uv.toml (ADR-0004) because an
+# sdist runs setup.py at INSTALL time — the Python analogue of an npm lifecycle
+# script. This project cannot honour that: `python-louvain` publishes NO wheel,
+# so it can only be installed by building from source.
+#
+# This is wholesale rather than per-package because uv has no per-package build
+# ALLOWLIST — `no-build-package` / `no-binary-package` only ever narrow, never
+# grant. (pip does have one, `no-binary = <name>`; uv does not.)
+#
+# What this re-enables, so it is not a surprise: any sdist in this project's
+# dependency tree may execute code during `uv sync`. The 7-day resolution
+# quarantine still applies, so a package published today will not resolve.
+no-build = false
